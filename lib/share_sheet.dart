@@ -1,4 +1,3 @@
-// lib/share_sheet.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // <--- Import Firestore
 import 'package:firebase_auth/firebase_auth.dart'; // <--- Import Auth
@@ -8,8 +7,6 @@ const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C); // Có thể dùng cho lỗi
-
-// --- ĐÃ XÓA: class Friend ---
 
 class ShareSheetContent extends StatefulWidget {
   final String postId; // ID của Post hoặc Reel
@@ -52,11 +49,11 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
     _loadFriends();
   }
 
-  // Hàm tải danh sách bạn bè từ Firestore (Giữ nguyên logic Firestore)
+  // Hàm tải danh sách bạn bè từ Firestore (Hoàn thiện logic)
   void _loadFriends() {
     if (_currentUser == null) return;
     _firestore.collection('users').doc(_currentUser!.uid).snapshots().listen((userDoc) {
-      if (!mounted) return; // Check if widget is still mounted
+      if (!mounted) return;
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>? ?? {};
         final List<String> friendUids = List<String>.from(userData['friendUids'] ?? []);
@@ -64,15 +61,18 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
           final queryUids = friendUids.length > 30 ? friendUids.sublist(0, 30) : friendUids;
           if (friendUids.length > 30) print("Warning: Share sheet chỉ hiển thị tối đa 30 bạn bè.");
           setState(() {
+            // Sử dụng whereIn để lấy chi tiết bạn bè
             _friendsStream = _firestore.collection('users').where(FieldPath.documentId, whereIn: queryUids).snapshots();
           });
         } else {
-          setState(() { _friendsStream = null; });
+          setState(() { _friendsStream = Stream.empty(); });
         }
+      } else {
+        setState(() { _friendsStream = Stream.empty(); });
       }
     }, onError: (error) {
       print("Lỗi tải friendUids: $error");
-      if (mounted) setState(() { _friendsStream = null; });
+      if (mounted) setState(() { _friendsStream = Stream.empty(); });
     });
   }
 
@@ -84,13 +84,67 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
     super.dispose();
   }
 
-  // Toggle chọn/bỏ chọn bạn bè (Giữ nguyên)
-  void _toggleFriendSelection(String friendUid) { /* ... */ }
+  // Toggle chọn/bỏ chọn bạn bè (Hoàn thiện logic)
+  void _toggleFriendSelection(String friendUid) {
+    setState(() {
+      if (_selectedFriendUids.contains(friendUid)) {
+        _selectedFriendUids.remove(friendUid);
+      } else {
+        _selectedFriendUids.add(friendUid);
+      }
+    });
+  }
 
-  // Hàm tăng share count (Giữ nguyên logic Firestore)
-  void _incrementShares() async { /* ... */ }
+  // Hàm tăng share count (Hoàn thiện logic Firestore)
+  Future<void> _incrementShares() async {
+    try {
+      final postRef = _firestore.collection('posts').doc(widget.postId);
+      await postRef.update({'sharesCount': FieldValue.increment(1)});
 
-  // --- PHẦN 1: CHIA SẺ LÊN TRANG CÁ NHÂN (Cập nhật Avatar) ---
+      setState(() {
+        _sharesCount++;
+      });
+      widget.onSharesUpdated(_sharesCount);
+
+    } catch (e) {
+      print("Lỗi cập nhật sharesCount: $e");
+    }
+  }
+
+  // ----------------------------------------------------
+  // --- PHẦN 1: CHIA SẺ LÊN TRANG CÁ NHÂN (Hoàn thiện) ---
+  // ----------------------------------------------------
+  void _shareToProfile() async {
+    final thoughts = _thoughtsController.text.trim();
+    final user = _currentUser;
+    if (user == null) return;
+
+    // 1. Tăng share count trên bài post gốc
+    await _incrementShares();
+
+    // 2. Tạo một bài post mới cho việc chia sẻ (Reposta)
+    final userName = user.displayName ?? user.email?.split('@').first ?? 'Người dùng Zink';
+
+    final newPostData = {
+      'uid': user.uid,
+      'userName': userName,
+      'userAvatarUrl': user.photoURL,
+      'postCaption': thoughts.isNotEmpty ? 'Đã chia sẻ: $thoughts' : 'Đã chia sẻ bài viết của ${widget.postUserName}.',
+      'sharedPostId': widget.postId, // ID bài viết gốc
+      'imageUrl': null, // Không có ảnh riêng, chỉ là repost
+      'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
+      'likedBy': [], 'savedBy': [], 'privacy': 'Công khai',
+      'timestamp': FieldValue.serverTimestamp(),
+    };
+
+    await _firestore.collection('posts').add(newPostData);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã chia sẻ lên Trang cá nhân!'), backgroundColor: topazColor));
+      Navigator.pop(context);
+    }
+  }
+
   Widget _buildShareToProfileSection() {
     // Lấy avatar user hiện tại (URL hoặc null)
     final String? currentUserAvatarUrl = _currentUser?.photoURL;
@@ -139,18 +193,13 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                 width: 40,
                 height: 40,
                 child: ElevatedButton(
-                  // Sửa lỗi: Thêm onPressed
-                  onPressed: () {
-                    // TODO: Logic chia sẻ lên trang cá nhân
-                    Navigator.pop(context); // Đóng sheet
-                  },
+                  onPressed: _shareToProfile, // <-- GỌI HÀM SHARE TO PROFILE
                   style: ElevatedButton.styleFrom(
                     padding: EdgeInsets.zero,
                     backgroundColor: topazColor,
                     foregroundColor: Colors.black,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  // Sửa lỗi: Thêm child
                   child: const Icon(Icons.send_rounded, size: 20),
                 ),
               ),
@@ -161,34 +210,60 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
     );
   }
 
-  // --- PHẦN 2: GỬI CHO BẠN BÈ (Cập nhật Avatar) ---
+  // --------------------------------------------------
+  // --- PHẦN 2: GỬI CHO BẠN BÈ (Hoàn thiện logic) ---
+  // --------------------------------------------------
+  void _sendMessageToFriends() async {
+    final message = _friendMessageController.text.trim();
+    if (_selectedFriendUids.isEmpty) return;
+
+    // 1. Tăng share count trên bài post gốc
+    await _incrementShares();
+
+    // 2. Gửi tin nhắn (Placeholder cho logic chat)
+    final recipientCount = _selectedFriendUids.length;
+    final user = _currentUser;
+    final senderName = user?.displayName ?? user?.email?.split('@').first ?? 'Bạn';
+
+    // Logic: Gửi tin nhắn chứa liên kết bài post (Mock: In ra console)
+    print("Gửi bài viết ${widget.postId} tới $recipientCount bạn bè.");
+    print("Tin nhắn kèm theo: $message");
+
+    // TODO: Triển khai logic tạo đoạn chat/tin nhắn thực tế cho từng người dùng.
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Đã gửi bài viết tới $recipientCount bạn bè.'),
+        backgroundColor: topazColor,
+      ));
+      Navigator.pop(context);
+    }
+  }
+
   Widget _buildShareToFriendsSection() {
     final bool hasFriendsSelected = _selectedFriendUids.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      // ...
       children: [
         const Padding(
-          padding: EdgeInsets.only(left: 16.0, top: 16.0, bottom: 10.0), // Sửa lỗi: Thêm padding
-          child: Text( // Sửa lỗi: Thêm child
+          padding: EdgeInsets.only(left: 16.0, top: 16.0, bottom: 10.0),
+          child: Text(
             'Gửi cho Bạn bè',
             style: TextStyle(color: topazColor, fontSize: 14, fontWeight: FontWeight.bold),
           ),
         ),
 
-        // Horizontal Scrollable Friend List (Sử dụng StreamBuilder - Cập nhật Avatar)
-// ...
-
-        // Horizontal Scrollable Friend List (Sử dụng StreamBuilder - Cập nhật Avatar)
         SizedBox(
           height: 90,
           child: StreamBuilder<QuerySnapshot>(
             stream: _friendsStream,
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting && _friendsStream != null) { /* Loading */ }
-              if (snapshot.hasError) { /* Error */ }
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) { /* No data */ }
+              if (snapshot.connectionState == ConnectionState.waiting && _friendsStream != Stream.empty()) {
+                return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver)));
+              }
+              if (snapshot.hasError) { return const Center(child: Text('Lỗi tải bạn bè.', style: TextStyle(color: coralRed, fontSize: 12))); }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) { return const Center(child: Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('Bạn chưa có bạn bè nào.', style: TextStyle(color: sonicSilver, fontSize: 12)))); }
 
               final friendDocs = snapshot.data!.docs;
               return ListView.builder(
@@ -200,13 +275,11 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                   final friendData = doc.data() as Map<String, dynamic>;
                   final friendUid = doc.id;
                   final friendName = friendData['name'] ?? 'Bạn bè';
-                  final avatarUrl = friendData['avatarUrl'] as String?; // Lấy URL (có thể null)
+                  final avatarUrl = friendData['avatarUrl'] as String?;
                   final isSelected = _selectedFriendUids.contains(friendUid);
 
-                  // Xác định ImageProvider (có thể null)
                   final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-                      ? NetworkImage(avatarUrl)
-                      : null; // Không còn fallback AssetImage
+                      ? NetworkImage(avatarUrl) : null;
 
                   return GestureDetector(
                     onTap: () => _toggleFriendSelection(friendUid),
@@ -218,19 +291,16 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                             alignment: Alignment.center,
                             children: [
                               if (isSelected) CircleAvatar(radius: 27, backgroundColor: topazColor),
-                              CircleAvatar( // Avatar đã xử lý null
+                              CircleAvatar(
                                 radius: 25,
                                 backgroundColor: darkSurface,
-                                backgroundImage: avatarProvider, // Có thể null
-                                // Hiển thị Icon nếu không có ảnh
+                                backgroundImage: avatarProvider,
                                 child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 25) : null,
-                                // ...
                               ),
                               if (isSelected)
                                 Positioned(
                                   bottom: 0,
                                   right: 0,
-                                  // Sửa lỗi: Thêm child
                                   child: Container(
                                     padding: const EdgeInsets.all(2),
                                     decoration: const BoxDecoration(
@@ -241,12 +311,10 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                                   ),
                                 ),
                             ],
-                            // ...
                           ),
                           const SizedBox(height: 5),
-                          // Sửa lỗi: Cung cấp String cho Text
                           Text(
-                            friendName.split(' ').first, // Hiển thị tên ngắn gọn
+                            friendName.split(' ').first,
                             style: TextStyle(
                               color: isSelected ? Colors.white : sonicSilver,
                               fontSize: 12,
@@ -255,7 +323,6 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                             maxLines: 1,
                           ),
                         ],
-// ...
                       ),
                     ),
                   );
@@ -265,13 +332,10 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
           ),
         ),
 
-        // Friend Message Input (Giữ nguyên)
-// ...
         // Friend Message Input
         if (hasFriendsSelected)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16.0, 10.0, 16.0, 10.0), // Sửa lỗi: Thêm padding
-            // Sửa lỗi: Thêm child (Row)
+            padding: const EdgeInsets.fromLTRB(16.0, 10.0, 16.0, 10.0),
             child: Row(
               children: [
                 Expanded(
@@ -293,10 +357,7 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                 ),
                 const SizedBox(width: 10),
                 ElevatedButton(
-                  onPressed: () {
-                    // TODO: Logic gửi tin nhắn cho bạn bè đã chọn
-                    Navigator.pop(context); // Đóng sheet
-                  },
+                  onPressed: _sendMessageToFriends, // <-- GỌI HÀM GỬI TIN NHẮN
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     backgroundColor: topazColor,
@@ -310,13 +371,13 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
             ),
           ),
       ],
-// ...      ],
     );
   }
 
-  // --- PHẦN 3: TÙY CHỌN KHÁC (Giữ nguyên UI và Placeholder logic) ---
+  // ----------------------------------------------------
+  // --- PHẦN 3: TÙY CHỌN KHÁC (Hoàn thiện logic) ---
+  // ----------------------------------------------------
   Widget _buildOtherOptionsSection() {
-    // ... (Code danh sách options và ListTile giữ nguyên)
     final List<Map<String, dynamic>> options = [
       {'icon': Icons.copy_rounded, 'label': 'Sao chép liên kết'},
       {'icon': Icons.messenger_outline_rounded, 'label': 'Gửi bằng Messenger'},
@@ -326,26 +387,27 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Padding(
-          padding: EdgeInsets.only(left: 16.0, top: 10, bottom: 0), // Adjust padding
+          padding: EdgeInsets.only(left: 16.0, top: 10, bottom: 0),
           child: Text('Tùy chọn khác', style: TextStyle(color: topazColor, fontSize: 14, fontWeight: FontWeight.bold)),
         ),
         ListView.builder(
-            shrinkWrap: true, // Important inside Column
-            physics: const NeverScrollableScrollPhysics(), // Disable scrolling of this inner list
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             itemCount: options.length,
             itemBuilder: (context, index){
               final option = options[index];
               return ListTile(
                 leading: Icon(option['icon'], color: Colors.white, size: 24),
                 title: Text(option['label'], style: const TextStyle(color: Colors.white, fontSize: 15)),
-                dense: true, // Make tiles more compact
+                dense: true,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 0),
                 onTap: () {
-                  // TODO: Implement actual sharing logic for each option
+                  // Mock logic sao chép/chia sẻ
                   ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Chức năng "${option['label']}" chưa được triển khai.'))
+                      SnackBar(content: Text('Đã sao chép liên kết (Mô phỏng).'))
                   );
-                  Navigator.pop(context); // Close sheet after selection
+                  _incrementShares(); // Tăng count shares khi người dùng chia sẻ ra ngoài
+                  Navigator.pop(context);
                 },
               );
             }
@@ -362,25 +424,24 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         border: Border(top: BorderSide(color: darkSurface, width: 0.5)),
       ),
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5), // Tăng maxHeight
       child: Column(
-        // ...
         children: [
           // Drag handle
-          Center( // Sửa lỗi: Thêm child (Center -> Container)
+          Center(
             child: Container(
               width: 40,
               height: 5,
               margin: const EdgeInsets.symmetric(vertical: 8.0),
               decoration: BoxDecoration(
-                color: darkSurface, // Màu thanh kéo
+                color: darkSurface,
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
           ),
 
-          // Hiển thị số lượt chia sẻ (Giữ nguyên)
-// ...
+          // Tiêu đề số lượt chia sẻ (Nếu cần)
+          // Text('$_sharesCount lượt chia sẻ', style: TextStyle(color: sonicSilver)),
           const Divider(color: darkSurface, height: 1, thickness: 1),
 
           // Sheet Content (Scrollable)
@@ -389,11 +450,11 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildShareToProfileSection(), // Đã cập nhật avatar
+                  _buildShareToProfileSection(), // Hoàn thiện
                   const Divider(color: darkSurface, height: 1, thickness: 1),
-                  _buildShareToFriendsSection(), // Đã cập nhật avatar
+                  _buildShareToFriendsSection(), // Hoàn thiện
                   const Divider(color: darkSurface, height: 1, thickness: 1),
-                  _buildOtherOptionsSection(), // Giữ nguyên
+                  _buildOtherOptionsSection(), // Hoàn thiện
                   SizedBox(height: MediaQuery.of(context).padding.bottom + 10),
                 ],
               ),

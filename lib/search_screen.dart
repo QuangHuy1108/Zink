@@ -1,4 +1,3 @@
-// lib/search_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // <--- Import Firestore
 import 'package:firebase_auth/firebase_auth.dart'; // <--- Import Auth (để lấy currentUserId)
@@ -7,16 +6,19 @@ import 'package:firebase_auth/firebase_auth.dart'; // <--- Import Auth (để l�
 // import 'feed_screen.dart'; // Cần PostCard, Constants, _formatTimestampAgo
 // --- Giả định PostCard và _formatTimestampAgo tồn tại ---
 // ...
-// --- Giả định PostCard và _formatTimestampAgo tồn tại ---
+// Constants (Giữ nguyên)
+const Color topazColor = Color(0xFFF6C886);
+const Color sonicSilver = Color(0xFF747579);
+const Color darkSurface = Color(0xFF1E1E1E);
+const Color coralRed = Color(0xFFFD402C); // Cho màu lỗi
+
 class PostCard extends StatelessWidget {
   final Map<String, dynamic> postData;
   final VoidCallback onStateChange;
   const PostCard({super.key, required this.postData, required this.onStateChange});
 
-  // Sửa lỗi: Di chuyển hàm helper ra ngoài build()
   Widget _buildImagePlaceholder(String? imageUrl) {
     if (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http')) {
-      // In a real app, use Image.network here with loading/error builders
       return Container(height: 150, color: Colors.grey.shade800, alignment: Alignment.center, child: Text('Image URL: $imageUrl', style: const TextStyle(color: Colors.white54, fontSize: 10)));
     } else {
       return Container( height: 150, color: darkSurface, alignment: Alignment.center, child: const Icon(Icons.image_not_supported, color: sonicSilver, size: 40), );
@@ -25,37 +27,37 @@ class PostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sửa lỗi: Sửa lại cấu trúc Container và Column
     return Container(
         padding: const EdgeInsets.all(8),
         margin: const EdgeInsets.symmetric(vertical: 4),
-        color: darkSurface,
+        decoration: BoxDecoration(
+            color: darkSurface,
+            borderRadius: BorderRadius.circular(12)
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Post by: ${postData['userName']}", style: const TextStyle(color: Colors.white)),
+            Text("Post by: ${postData['userName'] ?? 'Người dùng'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             const SizedBox(height: 5),
-            _buildImagePlaceholder(postData['imageUrl']), // Gọi hàm helper đã sửa
+            _buildImagePlaceholder(postData['imageUrl']),
             const SizedBox(height: 5),
             Text(postData['postCaption'] ?? '', style: const TextStyle(color: Colors.white70)),
             Text(_formatTimestampAgo(postData['timestamp'] ?? Timestamp.now()), style: const TextStyle(color: sonicSilver, fontSize: 12)),
           ],
         )
-    ); // Sửa lỗi: Đặt dấu ; đúng chỗ
+    );
   }
 }
-// ...
-String _formatTimestampAgo(Timestamp timestamp) { /* ... */ return ''; }
+
+String _formatTimestampAgo(Timestamp timestamp) {
+  final DateTime dateTime = timestamp.toDate();
+  final difference = DateTime.now().difference(dateTime);
+  if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
+  if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
+  if (difference.inHours < 24) return '${difference.inHours} giờ';
+  return '${difference.inDays} ngày';
+}
 // --- Kết thúc giả định ---
-
-
-// Constants (Giữ nguyên)
-const Color topazColor = Color(0xFFF6C886);
-const Color sonicSilver = Color(0xFF747579);
-const Color darkSurface = Color(0xFF1E1E1E);
-const Color coralRed = Color(0xFFFD402C); // Cho màu lỗi
-
-// --- ĐÃ XÓA: Mock assets (_userAssets, _postAssets) ---
 
 
 class SearchScreen extends StatefulWidget {
@@ -99,9 +101,14 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_currentQuery != query) {
       setState(() {
         _currentQuery = query;
-        _hasSearched = false;
-        _searchResults = [];
-        _isLoading = false;
+        // KHÔNG reset _hasSearched và _searchResults ngay lập tức
+        // Chỉ reset khi query rỗng
+        if (query.isEmpty) {
+          _hasSearched = false;
+          _searchResults = [];
+          _isLoading = false;
+        }
+        // else: Giữ nguyên kết quả cũ cho đến khi người dùng nhấn Search
       });
     }
   }
@@ -118,19 +125,24 @@ class _SearchScreenState extends State<SearchScreen> {
       final queryLower = searchQuery.toLowerCase();
       final currentUserId = _currentUser?.uid ?? '';
 
-      // Query 1: Tìm theo Tag
+      // Query 1: Tìm theo Tag (đã sửa)
       final tagQuery = _firestore.collection('posts')
-          .where('tag', whereIn: ['#$searchQuery', searchQuery, '#$queryLower', queryLower])
+      // Tìm kiếm chính xác tag (cần index)
+          .where('tag', isEqualTo: '#$queryLower')
           .orderBy('timestamp', descending: true)
           .limit(10);
 
-      // Query 2: Tìm theo Tên người đăng
+      // Query 2: Tìm theo Tên người đăng (đã sửa)
+      // Giả định bạn đã tạo trường 'userNameLower' trong Firestore
       final userQuery = _firestore.collection('posts')
           .where('userNameLower', isGreaterThanOrEqualTo: queryLower)
           .where('userNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
           .orderBy('userNameLower')
           .orderBy('timestamp', descending: true)
           .limit(10);
+
+      // Query 3: Tìm theo Caption (Tùy chọn, cần index)
+      // Tạm thời bỏ qua vì tìm kiếm full-text phức tạp trong Firestore
 
       final List<QuerySnapshot> snapshots = await Future.wait([tagQuery.get(), userQuery.get()]);
 
@@ -142,7 +154,6 @@ class _SearchScreenState extends State<SearchScreen> {
           data['id'] = doc.id;
 
           // Xử lý isLiked, isSaved, counts (giữ nguyên logic)
-          // ... (logic xử lý like/save/counts)
           final List<String> likedByList = List<String>.from(data['likedBy'] ?? []);
           final List<String> savedByList = List<String>.from(data['savedBy'] ?? []);
           data['isLiked'] = currentUserId.isNotEmpty && likedByList.contains(currentUserId);
@@ -151,10 +162,8 @@ class _SearchScreenState extends State<SearchScreen> {
           data['comments'] = (data['commentsCount'] is num ? (data['commentsCount'] as num).toInt() : 0);
           data['shares'] = (data['sharesCount'] is num ? (data['sharesCount'] as num).toInt() : 0);
 
-
-          // --- Xóa fallback ảnh asset ---
-          data['userAvatarUrl'] = data['userAvatarUrl']; // Chỉ lấy URL (có thể null)
-          data['imageUrl'] = data['imageUrl']; // Chỉ lấy URL (có thể null)
+          data['userAvatarUrl'] = data['userAvatarUrl'];
+          data['imageUrl'] = data['imageUrl'];
           data['locationTime'] = (data['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(data['timestamp']) : '';
 
 
@@ -163,7 +172,12 @@ class _SearchScreenState extends State<SearchScreen> {
       }
 
       final finalResults = resultsMap.values.toList();
-      finalResults.sort((a, b) { /* Sắp xếp theo timestamp */ return 0; });
+      // Sắp xếp theo Timestamp trong bộ nhớ (để kết hợp Tag và Username)
+      finalResults.sort((a, b) {
+        final aTime = (a['timestamp'] as Timestamp?)?.toDate() ?? DateTime(1970);
+        final bTime = (b['timestamp'] as Timestamp?)?.toDate() ?? DateTime(1970);
+        return bTime.compareTo(aTime); // descending
+      });
 
       if (mounted) {
         setState(() { _searchResults = finalResults; _isLoading = false; });
@@ -171,31 +185,57 @@ class _SearchScreenState extends State<SearchScreen> {
 
     } catch (e) {
       print("Lỗi tìm kiếm bài viết: $e");
-      // ...
       if (mounted) {
         setState(() { _isLoading = false; });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Đã xảy ra lỗi khi tìm kiếm.'), // Sửa lỗi: Thêm content
+          content: Text('Đã xảy ra lỗi khi tìm kiếm.'),
           backgroundColor: coralRed,
         ));
       }
-// ...
     }
   }
 
   // WIDGET: Xây dựng nội dung Body
   Widget _buildBodyContent(BuildContext context) {
-    if (_isLoading) { /* Loading */ }
-    if (_currentQuery.isEmpty && !_hasSearched) { /* Placeholder ban đầu */ }
-    if (_hasSearched && _searchResults.isEmpty) { /* Không có kết quả */ }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: topazColor));
+    }
+
+    if (_currentQuery.isEmpty && !_hasSearched) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search, color: sonicSilver, size: 80),
+            const SizedBox(height: 16),
+            Text('Nhập từ khóa để tìm kiếm bài viết', style: TextStyle(color: sonicSilver, fontSize: 16)),
+            Text('Tìm kiếm theo Tag hoặc Tên người dùng.', style: TextStyle(color: sonicSilver.withOpacity(0.7), fontSize: 14)),
+          ],
+        ),
+      );
+    }
+
+    if (_hasSearched && _searchResults.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.sentiment_dissatisfied_outlined, color: sonicSilver, size: 80),
+            const SizedBox(height: 16),
+            Text('Không tìm thấy kết quả nào cho "$_currentQuery"', style: TextStyle(color: sonicSilver, fontSize: 16)),
+          ],
+        ),
+      );
+    }
+
     if (_hasSearched && _searchResults.isNotEmpty) {
-      // Hiển thị danh sách PostCard (PostCard cần xử lý ảnh null)
+      // Hiển thị danh sách PostCard
       return ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0).copyWith(top: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0).copyWith(top: 10, bottom: 50),
         itemCount: _searchResults.length,
         itemBuilder: (context, index) {
           final post = _searchResults[index];
-          // PostCard sẽ nhận data với URL ảnh có thể null
+          // Giả định PostCard chấp nhận tất cả các trường dữ liệu cần thiết
           return PostCard(
               key: ValueKey(post['id']),
               postData: post,
@@ -204,11 +244,9 @@ class _SearchScreenState extends State<SearchScreen> {
         },
       );
     }
-    return Container();
-  }
 
-  // --- Hàm format Timestamp (Giữ nguyên) ---
-  // String _formatTimestampAgo(Timestamp timestamp) { /* ... */ }
+    return const SizedBox.shrink(); // Trường hợp mặc định
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -231,18 +269,14 @@ class _SearchScreenState extends State<SearchScreen> {
               hintStyle: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 15),
               border: InputBorder.none,
               prefixIcon: Icon(Icons.search, color: sonicSilver.withOpacity(0.8), size: 22),
-// ...
               suffixIcon: _currentQuery.isNotEmpty
                   ? IconButton(
-                // Sửa lỗi: Thêm icon
                 icon: const Icon(Icons.clear, color: sonicSilver, size: 18),
-                // Sửa lỗi: Thêm onPressed
                 onPressed: _searchController.clear,
                 splashRadius: 18,
               )
                   : null,
               filled: true, fillColor: darkSurface,
-// ...              filled: true, fillColor: darkSurface,
               contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 0),
               focusedBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: topazColor.withOpacity(0.5), width: 1.5)),
               enabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),

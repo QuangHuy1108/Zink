@@ -1,11 +1,9 @@
-// lib/feed_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // SỬA LỖI XUNG ĐỘT IMPORT:
-import 'profile_screen.dart'; // Giữ lại ProfileScreen từ file này
+import 'profile_screen.dart' hide MessageScreen; // <--- ĐÃ SỬA: Ẩn MessageScreen để tránh xung đột
 import 'comment_screen.dart'; // Giữ lại Comment và CommentBottomSheetContent từ file này
 import 'share_sheet.dart';
 import 'search_screen.dart';
@@ -16,6 +14,7 @@ import 'story_view_screen.dart' hide StoryContent; // create_story_screen đã �
 import 'story_manager_screen.dart' hide StoryContent;
 import 'suggested_friend_card.dart' hide ProfileScreen;
 import 'post_detail_screen.dart';
+import 'message_screen.dart'; // <-- ĐÃ THÊM: Import màn hình nhắn tin
 
 // --- Định nghĩa Comment (Giữ lại hoặc import từ file riêng) ---
 class Comment {
@@ -49,7 +48,7 @@ class Comment {
     return Comment(
       id: doc.id,
       userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Người dùng ẩn',
+      userName: data['userName'] ?? 'Người dùng Zink', // ĐÃ SỬA: Tên mặc định an toàn hơn
       userAvatarUrl: data['userAvatarUrl'], // Lấy URL (có thể null)
       text: data['text'] ?? '',
       timestamp: data['timestamp'] ?? Timestamp.now(),
@@ -73,6 +72,23 @@ const Color darkSurface = Color(0xFF1E1E1E);
 const Color activeGreen = Color(0xFF32CD32);
 
 // --- Story State (Giữ lại tạm thời nếu các màn hình khác cần) ---
+class StoryContent {
+  final String text;
+  final Offset textPosition;
+  final String song;
+  final Offset songPosition;
+  final String location;
+  final List<String> taggedFriends;
+
+  StoryContent({
+    required this.text,
+    required this.textPosition,
+    required this.song,
+    required this.songPosition,
+    required this.location,
+    required this.taggedFriends,
+  });
+}
 class StoryState {
   DateTime? lastPostTime;
   List<String> likedBy = [];
@@ -213,9 +229,7 @@ class FeedScreen extends StatefulWidget {
 class _FeedScreenState extends State<FeedScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  String _selectedTag = 'All';
   User? _currentUser;
-  final List<String> _availableTags = ['All', 'Art', 'Fashion', 'Food', 'Gaming', 'Music', 'Pet', 'Sport', 'Technology', 'Travel', 'New'];
   Stream<QuerySnapshot>? _storiesStream; // Stream for active stories
   Map<String, bool> _viewedStories = {}; // Local state to track viewed stories in this session
 
@@ -239,7 +253,6 @@ class _FeedScreenState extends State<FeedScreen> {
 
 
   void _forceRebuild() { if (mounted) setState(() {}); }
-  void _selectTag(String tag) { setState(() { _selectedTag = tag; }); }
 
   void _navigateToStoryScreen(Widget screen, VoidCallback onClosed) {
     Navigator.of(context).push(
@@ -285,7 +298,7 @@ class _FeedScreenState extends State<FeedScreen> {
     final String storyId = storyDoc.id; // Unique ID for this story document
 
     final bool isCurrentUserStory = storyUserId == _currentUser?.uid;
-    // Use local state _viewedStories to track viewed status in this session
+    // Use local state _viewedStories to track viewed stories in this session
     final bool storyViewed = _viewedStories[storyId] ?? false;
 
     // Xác định ImageProvider từ URL hoặc null
@@ -419,69 +432,77 @@ class _FeedScreenState extends State<FeedScreen> {
 
   // Widget Header đơn giản (Không dùng ảnh asset)
   Widget _buildSimpleHeader(BuildContext context) {
-    final String? currentUserAvatar = _currentUser?.photoURL;
-    final String currentUsername = _currentUser?.displayName ?? 'You';
-    final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
-        ? NetworkImage(currentUserAvatar)
-        : null;
+    // ĐÃ XÓA: Lấy thông tin Avatar và CurrentUser để hiển thị
+    // final String? currentUserAvatar = _currentUser?.photoURL;
+    // final String currentUsername = _currentUser?.displayName ?? 'You';
+    // final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
+    //     ? NetworkImage(currentUserAvatar)
+    //     : null;
 
-    return Padding( /* ... */
-      padding: const EdgeInsets.only(top: 50, bottom: 10, left: 8, right: 16), // Đã sửa padding
+    return Padding(
+      padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 10, bottom: 10, left: 16, right: 16),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => _navigateToProfile(_currentUser?.uid ?? currentUsername), // Use UID if available
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundImage: avatarProvider,
-                  backgroundColor: darkSurface,
-                  child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 20) : null,
-                ),
-                // ... Rest of header
-              ],
-            ),
+          // Tiêu đề chính (ví dụ: Logo Zink hoặc "Feed")
+          const Text(
+            'Zink', // Hoặc tên ứng dụng
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: topazColor),
           ),
           const Spacer(),
+          // Nút Search
           IconButton(
             icon: const Icon(Icons.search, color: sonicSilver, size: 28),
             onPressed: () {
+              // SỬA LỖI: Đảm bảo nút Search gọi đúng SearchScreen
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SearchScreen()));
             },
             padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(), // SỬA LỖI: Thêm constraints
             splashRadius: 24,
           ),
           const SizedBox(width: 10),
+          // Chuông Thông báo
           AnimatedNotificationBell(
             onOpenNotification: () {
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => const NotificationScreen()));
             },
+          ),
+          const SizedBox(width: 10), // Khoảng cách giữa Chuông và Tin nhắn
+          // Nút Tin nhắn (Message)
+          IconButton(
+            icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 28), // ĐÃ ĐỔI: Icon từ send_rounded sang message_outlined
+            onPressed: () {
+              // Điều hướng đến MessageScreen (Hiện là placeholder)
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const MessageScreen()),
+              );
+            },
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            splashRadius: 24,
           ),
         ],
       ),
     );
   }
 
-  // Widget Tag Filter (Giữ nguyên)
-  Widget _buildTag(String tag, bool isSelected, VoidCallback onTap) { /* ... */ return GestureDetector(/* ... */); }
-
-  // Widget Gợi ý kết bạn (Không dùng ảnh asset)
   // Widget Gợi ý kết bạn (Không dùng ảnh asset)
   Widget _buildSuggestedFriendsSection(BuildContext context) {
     // TODO: Lấy danh sách gợi ý từ Firestore/Backend
-    final List<Map<String, dynamic>> suggestedFriends = [
-      {'uid': 'mock_uid_1', 'name': 'Nguyễn T.', 'avatarUrl': null, 'mutual': 20},
-      {'uid': 'mock_uid_2', 'name': 'Lê A.', 'avatarUrl': null, 'mutual': 15},
-      // ... more mock data without local assets
-    ];
+    // ĐÃ XÓA MOCK DATA VÀ THAY BẰNG DANH SÁCH RỖNG
+    final List<Map<String, dynamic>> suggestedFriends = [];
+
+    if (suggestedFriends.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start, // Thêm căn lề trái
       children: [
-        const Padding( // <- DÒNG 428 (Đã sửa)
-          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // <- Sửa lỗi: Cung cấp padding
-          child: Text( // <- Sửa lỗi: Cung cấp child
+        // ĐÃ SỬA: Loại bỏ padding trên
+        const Padding(
+          padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 0.0, bottom: 8.0), // ĐẶT TOP LÀ 0.0
+          child: Text(
             'Gợi ý cho bạn',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
           ),
@@ -511,7 +532,7 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget _buildPostFeed() {
     final currentUserId = _currentUser?.uid ?? '';
     Query query = _firestore.collection('posts').orderBy('timestamp', descending: true);
-    if (_selectedTag != 'All') { /* ... filter by tag ... */ }
+    // if (_selectedTag != 'All') { /* ... filter by tag ... */ } // ĐÃ XÓA: Logic filter theo Tag
 
     return StreamBuilder<QuerySnapshot>(
       stream: query.limit(20).snapshots(),
@@ -562,7 +583,14 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   // --- Hàm format Timestamp (Giữ nguyên) ---
-  String _formatTimestampAgo(Timestamp timestamp) { /* ... */ return ''; }
+  String _formatTimestampAgo(Timestamp timestamp) {
+    final DateTime dateTime = timestamp.toDate();
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
+    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
+    if (difference.inHours < 24) return '${difference.inHours} giờ';
+    return '${difference.inDays} ngày';
+  }
 
 
   @override
@@ -602,32 +630,35 @@ class _FeedScreenState extends State<FeedScreen> {
                         );
                       }
 
-                      final storyDocs = snapshot.data!.docs;
-                      // TODO: Filter/Sort stories (e.g., friends first, unviewed first)
-                      // Simple display for now: My Story Creator + Active Stories
+                      // Lọc Story Docs: Chỉ giữ Story của người dùng hiện tại
+                      final currentUserId = _currentUser?.uid;
+                      final List<DocumentSnapshot> myStoryDocs = snapshot.data!.docs
+                          .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] == currentUserId)
+                          .toList();
+
+                      // Nếu có Story của người dùng khác, chúng ta loại bỏ chúng khỏi danh sách hiển thị.
+                      // Lựa chọn 1: Giữ lại "Tin của bạn" và loại bỏ phần liệt kê Story khác.
                       return ListView(
                         scrollDirection: Axis.horizontal,
                         padding: const EdgeInsets.symmetric(horizontal: 16.0),
                         children: [
-                          _buildMyStoryCreatorAvatar(context), // Always show creator first
-                          ...storyDocs
-                              .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] != _currentUser?.uid) // Exclude current user's stories from the main list
-                              .map((doc) => _buildSmallStoryAvatar(context, doc))
-                              .toList(),
+                          _buildMyStoryCreatorAvatar(context), // Luôn hiển thị "Tin của bạn"
+                          // ĐÃ XÓA: Phần hiển thị Story của người dùng khác
+                          // ...storyDocs
+                          //     .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] != _currentUser?.uid)
+                          //     .map((doc) => _buildSmallStoryAvatar(context, doc))
+                          //     .toList(),
                         ],
                       );
                     }
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 5), // ĐÃ SỬA: Giảm khoảng cách sau Stories xuống 5px
 
-              _buildTagFilters(), // Tag Filters (Unchanged)
-              const SizedBox(height: 15),
-
-              if (_selectedTag == 'All') ...[ // Suggested Friends (Unchanged)
-                _buildSuggestedFriendsSection(context),
-                const Divider(color: darkSurface, height: 1, thickness: 8),
-              ],
+              // Suggested Friends
+              _buildSuggestedFriendsSection(context),
+              // ĐÃ XÓA: Đường gạch xám dày
+              // const Divider(color: darkSurface, height: 1, thickness: 8),
 
               _buildPostFeed(), // Post Feed (Updated)
               const SizedBox(height: 50),
@@ -641,19 +672,6 @@ class _FeedScreenState extends State<FeedScreen> {
   // Helper to check if the stories stream has emitted data at least once
   bool _storiesStreamHasData(AsyncSnapshot<QuerySnapshot> snapshot) {
     return snapshot.connectionState != ConnectionState.waiting || (snapshot.hasData || snapshot.hasError);
-  }
-
-
-  // Separate method for tag filters for clarity
-  Widget _buildTagFilters() {
-    return SizedBox(
-      height: 45,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-        children: _availableTags.map((tag) => _buildTag(tag, _selectedTag == tag, () => _selectTag(tag))).toList(),
-      ),
-    );
   }
 
 } // End _FeedScreenState
@@ -677,7 +695,7 @@ class _PostCardState extends State<PostCard> {
   User? _currentUser;
   late String _postId;
   late bool _isLiked;
-  late bool _isSaved;
+  late bool _isSaved; // TRẠNG THÁI LƯU BÀI VIẾT
   late int _likesCount;
   late int _commentsCount;
   late int _sharesCount;
@@ -700,7 +718,7 @@ class _PostCardState extends State<PostCard> {
   void _updateStateFromWidget() {
     _postId = widget.postData['id'] as String? ?? '';
     _isLiked = widget.postData['isLiked'] as bool? ?? false;
-    _isSaved = widget.postData['isSaved'] as bool? ?? false;
+    _isSaved = widget.postData['isSaved'] as bool? ?? false; // LẤY TRẠNG THÁI LƯU
     _likesCount = widget.postData['likes'] as int? ?? 0;
     _commentsCount = widget.postData['comments'] as int? ?? 0;
     _sharesCount = widget.postData['shares'] as int? ?? 0;
@@ -722,10 +740,16 @@ class _PostCardState extends State<PostCard> {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
     final postRef = _firestore.collection('posts').doc(_postId);
+
+    // LOGIC CỐ ĐỊNH: Nếu đang lưu (true) thì xóa user khỏi savedBy, ngược lại thì thêm vào.
     final updateData = _isSaved
-        ? {'savedBy': FieldValue.arrayUnion([userId])}
-        : {'savedBy': FieldValue.arrayRemove([userId])};
+        ? {'savedBy': FieldValue.arrayRemove([userId])} // Bỏ lưu khi _isSaved là TRUE
+        : {'savedBy': FieldValue.arrayUnion([userId])}; // Lưu khi _isSaved là FALSE
+
     postRef.update(updateData).catchError((e) => print("Error updating save: $e"));
+
+    // Cập nhật trạng thái hiển thị trong ProfileScreen ngay lập tức.
+    // (ProfileScreen đã được sửa để lắng nghe thay đổi trong savedBy)
   }
 
   // --- UI Toggles (_toggleLike, _toggleSave) ---
@@ -740,8 +764,8 @@ class _PostCardState extends State<PostCard> {
 
   void _toggleSave() {
     if (_currentUser == null) return; // Prevent action if not logged in
-    setState(() { _isSaved = !_isSaved; });
-    _updateFirestoreSave();
+    setState(() { _isSaved = !_isSaved; }); // Đảo ngược trạng thái UI trước
+    _updateFirestoreSave(); // Gọi hàm cập nhật Firestore
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(_isSaved ? 'Đã lưu bài viết!' : 'Đã bỏ lưu bài viết.'),
       backgroundColor: _isSaved ? topazColor : sonicSilver,
@@ -857,7 +881,6 @@ class _PostCardState extends State<PostCard> {
 
 
   // --- More Options Button (_buildMoreOptionsButton) ---
-  // --- More Options Button (_buildMoreOptionsButton) ---
   Widget _buildMoreOptionsButton(BuildContext context) {
     final bool isMyPost = widget.postData['uid'] == _currentUser?.uid;
     List<PopupMenuItem<String>> items = [
@@ -896,7 +919,7 @@ class _PostCardState extends State<PostCard> {
       onTap: onTap,
       child: Row( // SỬA LỖI: Thêm child
         children: [
-          Icon(icon, color: color, size: 24),
+          Icon(icon, color: color, size: 28), // ĐÃ SỬA: Tăng size
           const SizedBox(width: 4),
           if (count > 0)
             Text(
@@ -909,122 +932,123 @@ class _PostCardState extends State<PostCard> {
   }
 
 // --- Build Method ---
-@override
-Widget build(BuildContext context) {
-  // Lấy dữ liệu từ state cục bộ
-  final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
-  final String? imageUrl = widget.postData['imageUrl'] as String?;
-  final String userName = widget.postData['userName'] as String? ?? 'Người dùng';
-  final String locationTime = widget.postData['locationTime'] as String? ?? '';
-  final String tag = widget.postData['tag'] as String? ?? '';
-  final String caption = widget.postData['postCaption'] as String? ?? '';
+  @override
+  Widget build(BuildContext context) {
+    // Lấy dữ liệu từ state cục bộ
+    final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
+    final String? imageUrl = widget.postData['imageUrl'] as String?;
+    // ĐẢM BẢO HIỂN THỊ TÊN THẬT HOẶC CHUỖI MẶC ĐỊNH HỢP LÝ
+    final String userName = widget.postData['userName'] as String? ?? 'Người dùng';
+    final String locationTime = widget.postData['locationTime'] as String? ?? '';
+    final String tag = widget.postData['tag'] as String? ?? '';
+    final String caption = widget.postData['postCaption'] as String? ?? '';
 
-  // Xác định ImageProvider (có thể null)
-  final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
-      ? NetworkImage(imageUrl) : null;
-  final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-      ? NetworkImage(avatarUrl) : null;
+    // Xác định ImageProvider (có thể null)
+    final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
+        ? NetworkImage(imageUrl) : null;
+    final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+        ? NetworkImage(avatarUrl) : null;
 
-  return Container(
-    margin: const EdgeInsets.symmetric(vertical: 8.0),
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 1. Header
-        Padding(
-          padding: const EdgeInsets.only(left: 8.0, bottom: 12.0, right: 0),
-          child: Row(
-            children: [
-              GestureDetector(
-                  onTap: () => _navigateToProfile(userName), // Pass username as fallback
-                  child: CircleAvatar(
-                    radius: 18, backgroundColor: darkSurface,
-                    backgroundImage: avatarImageProvider,
-                    child: avatarImageProvider == null ? const Icon(Icons.person, size: 18, color: sonicSilver) : null,
-                  )
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => _navigateToProfile(userName),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
-                      if (locationTime.isNotEmpty)
-                        Text(locationTime, style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12)),
-                    ],
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Header
+          Padding(
+            padding: const EdgeInsets.only(left: 16.0, bottom: 12.0, right: 16.0), // ĐÃ SỬA: Đồng bộ padding
+            child: Row(
+              children: [
+                GestureDetector(
+                    onTap: () => _navigateToProfile(userName), // Pass username as fallback
+                    child: CircleAvatar(
+                      radius: 18, backgroundColor: darkSurface,
+                      backgroundImage: avatarImageProvider,
+                      child: avatarImageProvider == null ? const Icon(Icons.person, size: 18, color: sonicSilver) : null,
+                    )
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _navigateToProfile(userName),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                        if (locationTime.isNotEmpty)
+                          Text(locationTime, style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12)),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (tag.isNotEmpty) /* ... Tag ... */
-              _buildMoreOptionsButton(context),
-            ],
-          ),
-        ),
-
-        // 2. Caption
-        if (caption.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 8.0, bottom: 8.0, right: 8.0),
-            child: Text(caption, style: const TextStyle(color: Colors.white, fontSize: 15)),
-          ),
-
-        // 3. Ảnh bài viết
-        GestureDetector(
-          onDoubleTap: _toggleLike,
-          onTap: () { /* Navigate to PostDetailScreen */ },
-          child: AspectRatio(
-            aspectRatio: 1.0,
-            child: Container(
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), color: darkSurface),
-              child: postImageProvider != null
-                  ? Image(
-                image: postImageProvider, fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: sonicSilver, size: 40)),
-              )
-                  : const Center(child: Icon(Icons.image_not_supported, color: sonicSilver, size: 50)),
+                if (tag.isNotEmpty) /* ... Tag ... */
+                  _buildMoreOptionsButton(context),
+              ],
             ),
           ),
-        ),
 
-        // 4. Actions
-        Padding(
-          padding: const EdgeInsets.only(top: 10.0, left: 8, right: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  _buildInteractionButton(icon: _isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? coralRed : sonicSilver, count: _likesCount, onTap: _toggleLike),
-                  const SizedBox(width: 15),
-                  _buildInteractionButton(icon: Icons.chat_bubble_outline_rounded, color: sonicSilver, count: _commentsCount, onTap: () => _showCommentSheet(context)),
-                  const SizedBox(width: 15),
-                  _buildInteractionButton(icon: Icons.send_rounded, color: sonicSilver, count: _sharesCount, onTap: () => _showShareSheet(context)),
-                  const Spacer(),
-                  IconButton(
-                    icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 24),
-                    onPressed: _toggleSave,
-                    padding: const EdgeInsets.symmetric(horizontal: 12), constraints: const BoxConstraints(), splashRadius: 24,
-                  ),
-                ],
-              ),
-              if (_likesCount > 0) ... [
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.only(left: 4.0), // Sửa lỗi: Thêm padding
-                  child: Text( // Sửa lỗi: Thêm child
-                    '$_likesCount lượt thích',
-                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-                  ),
+          // 2. Caption
+          if (caption.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 16.0, bottom: 8.0, right: 16.0), // ĐÃ SỬA: Đồng bộ padding
+              child: Text(caption, style: const TextStyle(color: Colors.white, fontSize: 15)),
+            ),
+
+          // 3. Ảnh bài viết
+          GestureDetector(
+            onDoubleTap: _toggleLike,
+            onTap: () { /* Navigate to PostDetailScreen */ },
+            child: AspectRatio(
+              aspectRatio: 1.0,
+              child: Container(
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), color: darkSurface),
+                child: postImageProvider != null
+                    ? Image(
+                  image: postImageProvider, fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: sonicSilver, size: 40)),
                 )
-              ]
-            ],
+                    : const Center(child: Icon(Icons.image_not_supported, color: sonicSilver, size: 50)),
+              ),
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+
+          // 4. Actions
+          Padding(
+            padding: const EdgeInsets.only(top: 10.0, left: 16, right: 16), // ĐÃ SỬA: Đồng bộ padding
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _buildInteractionButton(icon: _isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? coralRed : sonicSilver, count: _likesCount, onTap: _toggleLike),
+                    const SizedBox(width: 20), // ĐÃ SỬA: Tăng khoảng cách
+                    _buildInteractionButton(icon: Icons.chat_bubble_outline_rounded, color: sonicSilver, count: _commentsCount, onTap: () => _showCommentSheet(context)),
+                    const SizedBox(width: 20), // ĐÃ SỬA: Tăng khoảng cách
+                    _buildInteractionButton(icon: Icons.send_rounded, color: sonicSilver, count: _sharesCount, onTap: () => _showShareSheet(context)),
+                    const Spacer(),
+                    IconButton( // Nút Bookmark
+                      icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 28), // ĐÃ SỬA: Tăng size
+                      onPressed: _toggleSave,
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(), splashRadius: 24,
+                    ),
+                  ],
+                ),
+                if (_likesCount > 0) ... [
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4.0), // Sửa lỗi: Thêm padding
+                    child: Text( // Sửa lỗi: Thêm child
+                      '$_likesCount lượt thích',
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  )
+                ]
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 } // End _PostCardState

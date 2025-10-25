@@ -1,4 +1,3 @@
-// lib/create_post_screen.dart
 import 'dart:io'; // Giữ lại import này phòng trường hợp _displayImageUrl là file path sau này
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -98,10 +97,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final caption = _captionController.text.trim();
     final currentUser = _auth.currentUser;
 
-    // Yêu cầu bắt buộc chọn ảnh (kiểm tra _displayImageUrl)
-    if (_displayImageUrl == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Vui lòng chọn và upload ảnh để đăng bài!'),
+    // ĐÃ SỬA ĐIỀU KIỆN: Kiểm tra nếu cả ảnh và chú thích đều trống thì báo lỗi.
+    if (_displayImageUrl == null && caption.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Vui lòng thêm ảnh hoặc nhập chú thích để đăng bài!'),
           backgroundColor: coralRed));
       return;
     }
@@ -110,20 +109,30 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     setState(() { _isSubmitting = true; });
 
     try {
-      // imageUrl giờ đây phải là URL thật sau khi upload
-      final imageUrl = _displayImageUrl!; // Đã kiểm tra null ở trên
+      // imageUrl sẽ là URL thật (nếu có) hoặc null (nếu không có)
+      final imageUrl = _displayImageUrl;
 
-      final userName = currentUser.displayName ?? "Người dùng ẩn";
+      // Bắt đầu logic lấy tên người dùng chính xác
+      String userName;
+      if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
+        userName = currentUser.displayName!;
+      } else if (currentUser.email != null && currentUser.email!.isNotEmpty) {
+        // Lấy phần trước '@' làm tên nếu displayName là null
+        userName = currentUser.email!.split('@').first;
+      } else {
+        userName = "Người dùng Zink"; // Tên mặc định cuối cùng
+      }
+
       final userAvatarUrl = currentUser.photoURL; // Có thể null
 
       final newPostData = {
         'uid': currentUser.uid,
-        'userName': userName,
+        'userName': userName, // <-- ĐÃ CẬP NHẬT: Lấy tên đã được xử lý
         'userAvatarUrl': userAvatarUrl,
         'tag': '#New', // TODO: Cho phép người dùng chọn Tag
         'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
         'likedBy': [], 'savedBy': [], 'privacy': _selectedPrivacy,
-        'imageUrl': imageUrl, // Lưu URL ảnh (phải có)
+        'imageUrl': imageUrl, // Lưu URL ảnh (có thể là null)
         'postCaption': caption, 'location': null, 'taggedUsers': [],
         'timestamp': FieldValue.serverTimestamp(),
       };
@@ -156,6 +165,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
     // Không còn xử lý AssetImage
 
+    // Kiểm tra nếu có ảnh hoặc đang loading thì hiển thị khung ảnh
+    final bool showImagePlaceholder = _displayImageUrl != null || _isPicking;
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -186,31 +198,72 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Khu vực Xem trước Ảnh
-              GestureDetector(
-                onTap: _isPicking ? null : _pickImage, // Disable tap khi đang chọn ảnh
-                child: AspectRatio(
-                  aspectRatio: 1.0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: darkSurface, borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: imageProvider == null ? sonicSilver.withOpacity(0.5) : Colors.transparent, width: 1),
-                      image: imageProvider != null
-                          ? DecorationImage( image: imageProvider, fit: BoxFit.cover, onError: (err, stack) => print("Lỗi tải ảnh preview: $err"),)
-                          : null,
+              // Khu vực Xem trước Ảnh (Chỉ hiển thị nếu có ảnh hoặc đang chọn ảnh)
+              if (showImagePlaceholder) ...[
+                GestureDetector(
+                  onTap: _isPicking ? null : _pickImage, // Disable tap khi đang chọn ảnh
+                  child: AspectRatio(
+                    aspectRatio: 1.0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: darkSurface, borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: imageProvider == null ? sonicSilver.withOpacity(0.5) : Colors.transparent, width: 1),
+                        image: imageProvider != null
+                            ? DecorationImage( image: imageProvider, fit: BoxFit.cover, onError: (err, stack) => print("Lỗi tải ảnh preview: $err"),)
+                            : null,
+                      ),
+                      child: _isPicking // Hiển thị loading khi đang chọn/upload
+                          ? const Center(child: CircularProgressIndicator(color: topazColor))
+                          : (imageProvider == null
+                          ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.image_search, color: sonicSilver, size: 40),
+                            SizedBox(height: 8),
+                            Text('Chọn ảnh (Tùy chọn)', style: TextStyle(color: sonicSilver)),
+                          ],
+                        ),
+                      )
+                          : null),
                     ),
-                    child: _isPicking // Hiển thị loading khi đang chọn/upload
-                        ? const Center(child: CircularProgressIndicator(color: topazColor))
-                        : (imageProvider == null
-                        ? Center( /* ... Placeholder chọn ảnh ... */ )
-                        : null),
                   ),
                 ),
+                const SizedBox(height: 20),
+              ],
+
+              // Trường Chú thích (Caption)
+              TextField(
+                controller: _captionController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Bạn đang nghĩ gì?',
+                  hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                  filled: true,
+                  fillColor: darkSurface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: topazColor.withOpacity(0.5))),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                ),
+                maxLines: null,
               ),
               const SizedBox(height: 20),
-              // Trường Chú thích (Caption)
-              TextField( controller: _captionController, /* ... */ ),
-              const SizedBox(height: 20),
+              // Nút thêm ảnh (Chỉ hiển thị nếu chưa có ảnh và không đang picking)
+              if (!showImagePlaceholder)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 20.0),
+                  child: OutlinedButton.icon(
+                    onPressed: _isPicking ? null : _pickImage,
+                    icon: Icon(Icons.add_a_photo_outlined, color: topazColor),
+                    label: Text('Thêm ảnh', style: TextStyle(color: topazColor)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: topazColor.withOpacity(0.5)),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ),
+
               // Cài đặt quyền riêng tư (Dropdown)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
