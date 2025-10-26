@@ -446,12 +446,12 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          // Có thể thêm nút Add Friend ở đây nếu muốn
-          IconButton(
-            icon: const Icon(Icons.person_add_alt_1_outlined, color: Colors.white),
-            onPressed: _navigateToAddFriendScreen, // Hoặc logic thêm bạn khác
-            splashRadius: 24,
-          ),
+          // <<< NÚT THÊM BẠN ĐÃ BỊ XÓA (THEO YÊU CẦU) >>>
+          // IconButton(
+          //   icon: const Icon(Icons.person_add_alt_1_outlined, color: Colors.white),
+          //   onPressed: _navigateToAddFriendScreen, // Hoặc logic thêm bạn khác
+          //   splashRadius: 24,
+          // ),
         ],
       ),
     );

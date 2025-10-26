@@ -270,16 +270,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     print("TODO: Follow/Unfollow action: ${amIFollowingTarget ? 'Unfollow' : 'Follow'}");
   }
 
-  // --- Build Stats (ĐÃ SỬA: Thay Likes thành Posts Count và tăng Size) ---
+  // --- Build Stats (ĐÃ SỬA: Bỏ Lượt thích, căn giữa Followers) ---
   Widget _buildStatsBlock(int posts, int followers, int following) {
     return Row(
+      // Sử dụng MainAxisAlignment.spaceEvenly để căn đều
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _buildStatItem(posts, 'Bài viết'), // Posts Count
-        _buildVerticalDivider(),
+        _buildStatItem(posts, 'Bài viết'),
+        // Không cần divider ở đây nếu chỉ có 3 mục
         _buildStatItem(followers, 'Người theo dõi'),
-        _buildVerticalDivider(),
-        _buildStatItem(following, 'Đang theo dõi'), // Following Count
+        // Không cần divider ở đây nếu chỉ có 3 mục
+        _buildStatItem(following, 'Đang theo dõi'),
       ],
     );
   }
@@ -289,26 +290,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
       children: [
         Text(
           count.toString(),
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20), // ĐÃ SỬA: Tăng fontSize
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 14), // ĐÃ SỬA: Tăng fontSize
+          style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 14),
         ),
       ],
     );
   }
 
-  Widget _buildVerticalDivider() {
-    return Container(
-      height: 25,
-      width: 1,
-      color: sonicSilver.withOpacity(0.4),
-    );
-  }
+  // Widget _buildVerticalDivider() { // Không cần nữa nếu dùng spaceEvenly cho 3 mục
+  //   return Container(
+  //     height: 25,
+  //     width: 1,
+  //     color: sonicSilver.withOpacity(0.4),
+  //   );
+  // }
 
-  // --- Action Buttons (ĐÃ SỬA: Loại bỏ nút chỉnh sửa khi là profile của mình) ---
+  // --- Action Buttons ---
   Widget _buildActionButtons(BuildContext context, bool isAccountLocked, String name, String bio) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -316,19 +317,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         stream: _myUserDataStream,
         builder: (context, myDataSnapshot) {
           if (_isMyProfile) {
-            // ĐÃ XÓA: Loại bỏ nút chỉnh sửa ở đây.
-            return const SizedBox.shrink();
+            return const SizedBox.shrink(); // Không hiển thị nút nào cho profile của mình
           }
 
-          // Logic cho profile người khác (Giữ nguyên)
+          // Logic cho profile người khác
           bool amIFollowingTarget = false;
           if (myDataSnapshot.hasData && myDataSnapshot.data!.exists) {
             final myData = myDataSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-            // Vì yêu cầu "khóa phần những người đang theo dõi tôi", nên chúng ta phải luôn biết mình có follow họ không.
             amIFollowingTarget = (myData['following'] as List<dynamic>? ?? []).contains(_profileUserId);
           }
 
-          // Nút Follow/Message cho profile người khác
           return Row(
             children: [
               Expanded(
@@ -366,7 +364,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // --- Start of newly defined methods ---
 
-  // Hiển thị ảnh FullScreen (Sửa lỗi undefined method)
+  // Hiển thị ảnh FullScreen
   void _showFullScreenImage(String? imageUrl, {String? tag}) {
     if (imageUrl == null || imageUrl.isEmpty || !imageUrl.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không có ảnh để hiển thị.')));
@@ -481,13 +479,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ]);
   }
 
-  // Widget cho menu Profile của tôi (ĐÃ CẬP NHẬT)
+  // Widget cho menu Profile của tôi
   Widget _buildMyProfileMenu(BuildContext context) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.menu, color: Colors.white),
       color: darkSurface,
       itemBuilder: (BuildContext context) => [
-        const PopupMenuItem<String>(value: 'edit', child: Text('Chỉnh sửa trang cá nhân')), // ĐÃ DI CHUYỂN
+        const PopupMenuItem<String>(value: 'edit', child: Text('Chỉnh sửa trang cá nhân')),
         const PopupMenuItem<String>(value: 'settings', child: Text('Cài đặt')),
         const PopupMenuItem<String>(value: 'logout', child: Text('Đăng xuất', style: TextStyle(color: coralRed))),
       ],
@@ -495,12 +493,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (value == 'logout') {
           widget.onLogout();
         } else if (value == 'edit') {
-          // Lấy dữ liệu cần thiết (đảm bảo an toàn)
           final currentSnapshot = (_userStream as Stream<DocumentSnapshot>).first;
-
           currentSnapshot.then((snapshot) {
             final data = snapshot.data() as Map<String, dynamic>? ?? {};
-
             Navigator.push(context, MaterialPageRoute(builder: (context) => EditProfileScreen(
               currentUserId: _profileUserId,
               initialName: data['name'] ?? '',
@@ -513,7 +508,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể tải dữ liệu để chỉnh sửa.'), backgroundColor: coralRed));
           });
         }
-        // TODO: Xử lý logic settings
       },
     );
   }
@@ -527,45 +521,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const PopupMenuItem<String>(value: 'report', child: Text('Báo cáo người dùng')),
         const PopupMenuItem<String>(value: 'block', child: Text('Chặn người dùng')),
       ],
-      onSelected: (String value) {
-        // TODO: Xử lý logic report/block
-      },
+      onSelected: (String value) { /* TODO: Xử lý logic report/block */ },
     );
   }
 
   // --- End of newly defined methods ---
 
 
-  // --- Gallery Tabs (ĐÃ SỬA: Giao diện TikTok và Hạ thấp) ---
+  // --- Gallery Tabs ---
   Widget _buildGalleryTabs() {
     final isMyProfile = _isMyProfile;
-
     return Container(
-      // Padding dọc bằng 0 để tabbar sát vào nội dung
       padding: EdgeInsets.zero,
       decoration: BoxDecoration(
-        color: Colors.black, // Nền đen
-        border: Border(
-          bottom: BorderSide(
-            color: darkSurface, // Đường viền mỏng
-            width: 0.5,
-          ),
-        ),
+        color: Colors.black,
+        border: Border( bottom: BorderSide( color: darkSurface, width: 0.5, ), ),
       ),
       child: Row(
-        // Chia đều không gian cho các icon
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          // Tab 0: Posts Công khai
           _buildTabIcon(Icons.grid_on_rounded, 0),
-          // Tab 1 (hoặc 2): Posts Riêng tư (Chỉ của tôi) HOẶC Bài đăng khác
-          if (isMyProfile)
-            _buildTabIcon(Icons.lock_outline_rounded, 1),
-          // Tab 2 (hoặc 3): Bài đã Thích
+          if (isMyProfile) _buildTabIcon(Icons.lock_outline_rounded, 1),
           _buildTabIcon(Icons.favorite_border_rounded, isMyProfile ? 2 : 1),
-          // Tab 3 (hoặc 4): Bài đã Lưu (Chỉ của tôi)
-          if (isMyProfile)
-            _buildTabIcon(Icons.bookmark_border_rounded, 3),
+          if (isMyProfile) _buildTabIcon(Icons.bookmark_border_rounded, 3),
         ],
       ),
     );
@@ -573,143 +551,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildTabIcon(IconData icon, int index) {
     final isSelected = _selectedTabIndex == index;
-
     return Expanded(
-      child: InkWell( // Dùng InkWell thay vì IconButton để loại bỏ padding mặc định
-        onTap: () {
-          if (_selectedTabIndex != index) {
-            setState(() { _selectedTabIndex = index; });
-          }
-        },
+      child: InkWell(
+        onTap: () { if (_selectedTabIndex != index) setState(() { _selectedTabIndex = index; }); },
         child: Container(
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(vertical: 10.0), // Padding cho chiều cao tab
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: isSelected ? Colors.white : Colors.transparent,
-                width: isSelected ? 2.0 : 0.0, // Thanh gạch chân màu trắng
-              ),
-            ),
-          ),
-          child: Icon(
-              icon,
-              color: isSelected ? Colors.white : sonicSilver.withOpacity(0.8),
-              size: 24
-          ),
+          padding: const EdgeInsets.symmetric(vertical: 10.0),
+          decoration: BoxDecoration( border: Border( bottom: BorderSide( color: isSelected ? Colors.white : Colors.transparent, width: isSelected ? 2.0 : 0.0, ), ), ),
+          child: Icon( icon, color: isSelected ? Colors.white : sonicSilver.withOpacity(0.8), size: 24 ),
         ),
       ),
     );
   }
 
 
-  // --- Content Grid (ĐÃ SỬA: Logic 4 Tabs) ---
+  // --- Content Grid ---
   Widget _buildContentGrid() {
-    if (_profileUserId.isEmpty) {
-      return const Center(child: Padding(
-          padding: EdgeInsets.all(40.0),
-          child: Text('Không tìm thấy ID người dùng.', style: TextStyle(color: coralRed))
-      ));
-    }
+    if (_profileUserId.isEmpty) { return const Center(child: Padding( padding: EdgeInsets.all(40.0), child: Text('Không tìm thấy ID người dùng.', style: TextStyle(color: coralRed)) )); }
     final currentUserId = _currentUser?.uid ?? '';
     Query postsQuery;
 
-    // Default query if none of the specific tabs match (shouldn't happen with the new structure)
-    postsQuery = _firestore.collection('posts')
-        .where('uid', isEqualTo: _profileUserId)
-        .where('privacy', isEqualTo: 'Công khai') // Mặc định là công khai
-        .orderBy('timestamp', descending: true);
-
-    // Xác định chỉ mục thực tế cho người dùng hiện tại
+    postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true);
     final tabIndex = _selectedTabIndex;
     final isMyProfile = _isMyProfile;
 
     if (isMyProfile) {
       switch (tabIndex) {
-        case 0: // Posts (Công khai)
-          postsQuery = _firestore.collection('posts')
-              .where('uid', isEqualTo: _profileUserId)
-              .where('privacy', isEqualTo: 'Công khai')
-              .orderBy('timestamp', descending: true);
-          break;
-        case 1: // Posts (Chỉ mình tôi)
-          postsQuery = _firestore.collection('posts')
-              .where('uid', isEqualTo: _profileUserId)
-              .where('privacy', isEqualTo: 'Chỉ mình tôi')
-              .orderBy('timestamp', descending: true);
-          break;
-        case 2: // Posts đã Thích (Liked)
-          postsQuery = _firestore.collection('posts')
-              .where('likedBy', arrayContains: currentUserId)
-              .orderBy('timestamp', descending: true);
-          break;
-        case 3: // Posts đã Lưu (Saved)
-          postsQuery = _firestore.collection('posts')
-              .where('savedBy', arrayContains: currentUserId)
-              .orderBy('timestamp', descending: true);
-          break;
+        case 0: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true); break;
+        case 1: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Chỉ mình tôi').orderBy('timestamp', descending: true); break;
+        case 2: postsQuery = _firestore.collection('posts').where('likedBy', arrayContains: currentUserId).orderBy('timestamp', descending: true); break;
+        case 3: postsQuery = _firestore.collection('posts').where('savedBy', arrayContains: currentUserId).orderBy('timestamp', descending: true); break;
       }
     } else {
-      // Profile người khác (chỉ xem Công khai và Đã thích)
       switch (tabIndex) {
-        case 0: // Posts (Công khai)
-          postsQuery = _firestore.collection('posts')
-              .where('uid', isEqualTo: _profileUserId)
-              .where('privacy', isEqualTo: 'Công khai')
-              .orderBy('timestamp', descending: true);
-          break;
-        case 1: // Posts đã Thích (Liked) - Index 1 khi xem profile người khác
-        // Lưu ý: Rất ít ứng dụng cho phép xem bài đã thích của người khác
-          return const Center(child: Padding(padding: EdgeInsets.all(40.0), child: Text('Không thể xem bài viết đã thích của người khác.', style: TextStyle(color: sonicSilver))));
-
-        default: // Mặc định hiển thị công khai
-          postsQuery = _firestore.collection('posts')
-              .where('uid', isEqualTo: _profileUserId)
-              .where('privacy', isEqualTo: 'Công khai')
-              .orderBy('timestamp', descending: true);
+        case 0: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true); break;
+        case 1: return const Center(child: Padding(padding: EdgeInsets.all(40.0), child: Text('Không thể xem bài viết đã thích của người khác.', style: TextStyle(color: sonicSilver))));
+        default: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true);
       }
     }
-
 
     return StreamBuilder<QuerySnapshot>(
       stream: postsQuery.limit(21).snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 40.0),
-              child: CircularProgressIndicator(color: topazColor)
-          ));
-        }
-        if (snapshot.hasError) {
-          return Center(child: Padding(
-              padding: const EdgeInsets.all(40.0),
-              child: Text('Lỗi tải nội dung: ${snapshot.error}', style: const TextStyle(color: coralRed))
-          ));
-        }
-
+        if (snapshot.connectionState == ConnectionState.waiting) { return const Center(child: Padding( padding: EdgeInsets.symmetric(vertical: 40.0), child: CircularProgressIndicator(color: topazColor) )); }
+        if (snapshot.hasError) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text('Lỗi tải nội dung: ${snapshot.error}', style: const TextStyle(color: coralRed)) )); }
         final postDocs = snapshot.data?.docs ?? [];
-        if (postDocs.isEmpty) {
-          return Center(child: Padding(
-              padding: const EdgeInsets.all(40.0),
-              child: Text(_selectedTabIndex == 0 ? 'Chưa có bài viết nào được đăng.' : 'Không có nội dung cho tab này.', style: TextStyle(color: sonicSilver))
-          ));
-        }
+        if (postDocs.isEmpty) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text(_selectedTabIndex == 0 ? 'Chưa có bài viết nào được đăng.' : 'Không có nội dung cho tab này.', style: TextStyle(color: sonicSilver)) )); }
 
-        // Grid View
         return GridView.builder(
-          padding: EdgeInsets.zero,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
           itemCount: postDocs.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3, crossAxisSpacing: 1.0, mainAxisSpacing: 1.0, childAspectRatio: 1.0),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount( crossAxisCount: 3, crossAxisSpacing: 1.0, mainAxisSpacing: 1.0, childAspectRatio: 1.0),
           itemBuilder: (context, index) {
             final doc = postDocs[index];
             final postData = doc.data() as Map<String, dynamic>? ?? {};
             final String? imageUrl = postData['imageUrl'] as String?;
             final List<String> likedByList = List<String>.from(postData['likedBy'] ?? []);
             final int likes = (postData['likesCount'] is num ? (postData['likesCount'] as num).toInt() : likedByList.length);
-
             return _buildGridItem(doc.id, imageUrl, likes);
           },
         );
@@ -717,56 +615,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-
-  // Widget cho một item trong Grid (Giữ nguyên)
+  // Widget cho một item trong Grid
   Widget _buildGridItem(String postId, String? imagePathOrUrl, int likes) {
-    final ImageProvider? imageProvider = (imagePathOrUrl != null && imagePathOrUrl.isNotEmpty && imagePathOrUrl.startsWith('http'))
-        ? NetworkImage(imagePathOrUrl) : null;
-
+    final ImageProvider? imageProvider = (imagePathOrUrl != null && imagePathOrUrl.isNotEmpty && imagePathOrUrl.startsWith('http')) ? NetworkImage(imagePathOrUrl) : null;
     return GestureDetector(
       onTap: () => _navigateToPostDetail(postId),
       child: Container(
           decoration: const BoxDecoration( color: darkSurface ),
-          child: Stack( // Dùng Stack để thêm overlay Likes
+          child: Stack(
             fit: StackFit.expand,
             children: [
-              imageProvider != null
-                  ? Image(
-                image: imageProvider, fit: BoxFit.cover,
-                loadingBuilder: (context, child, progress) => progress == null ? child : Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white24))),
-                errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, color: sonicSilver),
-              )
-                  : const Icon(Icons.image_not_supported, color: sonicSilver, size: 40),
-
-              // Likes/Saves Overlay (như TikTok)
-              if (likes > 0)
-                Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.all(6.0),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.favorite, color: Colors.white, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          likes.toString(),
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              imageProvider != null ? Image( image: imageProvider, fit: BoxFit.cover, loadingBuilder: (context, child, progress) => progress == null ? child : Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white24))), errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, color: sonicSilver), ) : const Icon(Icons.image_not_supported, color: sonicSilver, size: 40),
+              if (likes > 0) Align( alignment: Alignment.bottomLeft, child: Padding( padding: const EdgeInsets.all(6.0), child: Row( mainAxisSize: MainAxisSize.min, children: [ const Icon(Icons.favorite, color: Colors.white, size: 14), const SizedBox(width: 4), Text( likes.toString(), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold), ), ], ), ), ),
             ],
           )
       ),
     );
   }
 
-  // Hàm điều hướng đến Post Detail (Placeholder)
+  // Hàm điều hướng đến Post Detail
   Future<void> _navigateToPostDetail(String postId) async {
     print("Navigating to Post Detail for: $postId");
-    // TODO: Triển khai logic lấy post detail và điều hướng
+    // TODO: Implement navigation logic
   }
 
   // --- Hàm Build chính ---
@@ -775,78 +645,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return StreamBuilder<DocumentSnapshot>(
       stream: _userStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Scaffold(
-              backgroundColor: Colors.black,
-              body: Center(child: CircularProgressIndicator(color: topazColor))
-          ));
-        }
-        if (snapshot.hasError) {
-          return Center(child: Scaffold(
-              backgroundColor: Colors.black,
-              body: Center(child: Text('Lỗi tải dữ liệu người dùng: ${snapshot.error}', style: const TextStyle(color: coralRed)))
-          ));
-        }
+        if (snapshot.connectionState == ConnectionState.waiting) { return const Center(child: Scaffold( backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: topazColor)) )); }
+        if (snapshot.hasError) { return Center(child: Scaffold( backgroundColor: Colors.black, body: Center(child: Text('Lỗi tải dữ liệu người dùng: ${snapshot.error}', style: const TextStyle(color: coralRed))) )); }
 
         final userData = snapshot.data?.data() as Map<String, dynamic>? ?? {};
         final String displayedName = userData['name'] ?? 'Người dùng Zink';
         final String displayedTitle = userData['title'] ?? userData['bio'] ?? '';
-        final String displayedBio = userData['bio'] ?? userData['title'] ?? ''; // Lấy Bio
-        final bool isAccountLocked = userData['isPrivate'] ?? false; // Lấy trạng thái khóa
-
+        final String displayedBio = userData['bio'] ?? userData['title'] ?? '';
+        final bool isAccountLocked = userData['isPrivate'] ?? false;
         final String? avatarUrl = userData['avatarUrl'] as String?;
-        final String? coverUrl = userData['coverImageUrl'] as String?;
+        final String? coverUrl = userData['coverImageUrl'] as String?; // Vẫn lấy coverUrlเผื่อ dùng sau
         final List<String> followers = List<String>.from(userData['followers'] ?? []);
         final List<String> following = List<String>.from(userData['following'] ?? []);
         final int postsCount = (userData['postsCount'] is num ? (userData['postsCount'] as num).toInt() : 0);
-        final int totalLikes = (userData['totalLikes'] is num ? (userData['totalLikes'] as num).toInt() : 0);
 
-        final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-            ? NetworkImage(avatarUrl) : null;
-        final ImageProvider? coverImageProvider = (coverUrl != null && coverUrl.isNotEmpty && coverUrl.startsWith('http'))
-            ? NetworkImage(coverUrl) : null;
+        final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http')) ? NetworkImage(avatarUrl) : null;
 
         return Scaffold(
           backgroundColor: Colors.black,
           appBar: AppBar(
             backgroundColor: Colors.black, elevation: 0,
-            title: Row( // Thêm icon khóa nếu tài khoản là private
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(displayedName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                if (isAccountLocked)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 6.0),
-                    child: Icon(Icons.lock, color: sonicSilver, size: 18),
-                  ),
-              ],
-            ),
+            title: Row( mainAxisSize: MainAxisSize.min, children: [ Text(displayedName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), if (isAccountLocked) const Padding( padding: EdgeInsets.only(left: 6.0), child: Icon(Icons.lock, color: sonicSilver, size: 18), ), ], ),
             centerTitle: true,
-            leading: _isMyProfile
-                ? null
-                : IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
-            actions: [
-              _isMyProfile ? _buildMyProfileMenu(context) : _buildOtherProfileMenu(context),
-            ],
+            leading: _isMyProfile ? null : IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+            actions: [ _isMyProfile ? _buildMyProfileMenu(context) : _buildOtherProfileMenu(context), ],
           ),
           body: Column(
             children: [
-              // 1. HEADER INFO (Không cần NestedScrollView vì không có ảnh bìa)
+              // 1. HEADER INFO (Đã bỏ totalLikes)
               _buildProfileHeaderContent(
-                  context, displayedName, displayedTitle, displayedBio, // THÊM displayedBio
+                  context, displayedName, displayedTitle, displayedBio,
                   avatarUrl, avatarImageProvider,
-                  postsCount, followers.length, following.length, isAccountLocked // THÊM isAccountLocked
+                  postsCount, followers.length, following.length,
+                  isAccountLocked
               ),
-
-              // 2. TABS (ĐÃ HẠ THẤP)
+              // 2. TABS
               _buildGalleryTabs(),
-
               // 3. CONTENT GRID
-              Expanded(
-                child: SingleChildScrollView(
-                  child: _buildContentGrid(),
-                ),
-              ),
+              Expanded( child: SingleChildScrollView( child: _buildContentGrid(), ), ),
             ],
           ),
         );
@@ -854,65 +690,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- Phương thức chỉ xây dựng nội dung Header (KHÔNG bao gồm Cover Image) ---
+  // --- Phương thức xây dựng nội dung Header (ĐÃ SỬA: Bỏ totalLikes) ---
   Widget _buildProfileHeaderContent(
-      BuildContext context, String name, String title, String bio, // THÊM bio
+      BuildContext context, String name, String title, String bio,
       String? avatarPathOrUrl, ImageProvider? avatarImageProvider,
-      int postsCount, int followersCount, int followingCount, bool isAccountLocked // THÊM isAccountLocked
+      int postsCount, int followersCount, int followingCount,
+      bool isAccountLocked
       ) {
     final heroTag = 'userAvatar_$_profileUserId';
-
-    // Nếu không phải profile của tôi và profile đó bị khóa, ẩn số lượng theo dõi/đang theo dõi.
     final bool hideSensitiveStats = !_isMyProfile && isAccountLocked;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Column(
         children: [
-          const SizedBox(height: 5), // ĐÃ SỬA: Giảm khoảng cách trên cùng
+          const SizedBox(height: 5),
           // Avatar
-          GestureDetector(
-            onTap: () => _handleAvatarTap(context, avatarPathOrUrl),
-            child: Hero(
-              tag: heroTag,
-              child: CircleAvatar(
-                radius: 40, backgroundColor: darkSurface, // ĐÃ SỬA: Tăng kích thước lên 40
-                backgroundImage: avatarImageProvider,
-                child: avatarImageProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 40) : null, // ĐÃ SỬA: Tăng kích thước icon
-              ),
-            ),
-          ),
-          // const SizedBox(height: 10), // BỎ PHẦN TÊN DƯỚI AVATAR
-
-          // Tiểu sử/Bio (Mới)
-          if (bio.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 10.0, bottom: 10.0), // Padding cho Bio
-              child: Text(
-                  bio,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: sonicSilver, fontSize: 16)
-              ),
-            ),
-
-          const SizedBox(height: 10), // ĐÃ SỬA: Khoảng cách giữa Bio và Stats
-
+          GestureDetector( onTap: () => _handleAvatarTap(context, avatarPathOrUrl), child: Hero( tag: heroTag, child: CircleAvatar( radius: 40, backgroundColor: darkSurface, backgroundImage: avatarImageProvider, child: avatarImageProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 40) : null, ), ), ),
+          // Bio
+          if (bio.isNotEmpty) Padding( padding: const EdgeInsets.only(top: 10.0, bottom: 10.0), child: Text( bio, textAlign: TextAlign.center, style: TextStyle(color: sonicSilver, fontSize: 16) ), ),
+          const SizedBox(height: 10),
           // Stats Block (ĐÃ CẬP NHẬT)
           _buildStatsBlock(
               postsCount,
               hideSensitiveStats ? 0 : followersCount,
               hideSensitiveStats ? 0 : followingCount
           ),
-
-          const SizedBox(height: 20), // ĐÃ SỬA: Tăng khoảng cách
-
+          const SizedBox(height: 20),
           // Action Buttons
-          _buildActionButtons(
-              context,
-              isAccountLocked,
-              name,
-              bio
-          ), // <<< THÊM CÁC THAM SỐ CÒN THIẾU
+          _buildActionButtons( context, isAccountLocked, name, bio ),
           const SizedBox(height: 10),
         ],
       ),
