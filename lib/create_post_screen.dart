@@ -97,7 +97,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final caption = _captionController.text.trim();
     final currentUser = _auth.currentUser;
 
-    // ĐÃ SỬA ĐIỀU KIỆN: Kiểm tra nếu cả ảnh và chú thích đều trống thì báo lỗi.
     if (_displayImageUrl == null && caption.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Vui lòng thêm ảnh hoặc nhập chú thích để đăng bài!'),
@@ -109,30 +108,29 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     setState(() { _isSubmitting = true; });
 
     try {
-      // imageUrl sẽ là URL thật (nếu có) hoặc null (nếu không có)
       final imageUrl = _displayImageUrl;
 
-      // Bắt đầu logic lấy tên người dùng chính xác
       String userName;
       if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
         userName = currentUser.displayName!;
       } else if (currentUser.email != null && currentUser.email!.isNotEmpty) {
-        // Lấy phần trước '@' làm tên nếu displayName là null
         userName = currentUser.email!.split('@').first;
       } else {
-        userName = "Người dùng Zink"; // Tên mặc định cuối cùng
+        userName = "Người dùng Zink";
       }
 
-      final userAvatarUrl = currentUser.photoURL; // Có thể null
+      final userNameLower = userName.toLowerCase(); // <--- TÍNH TOÁN VÀ LƯU TRỮ TRƯỜNG CẦN THIẾT
+      final userAvatarUrl = currentUser.photoURL;
 
       final newPostData = {
         'uid': currentUser.uid,
-        'userName': userName, // <-- ĐÃ CẬP NHẬT: Lấy tên đã được xử lý
+        'userName': userName,
+        'userNameLower': userNameLower, // <--- ĐÃ THÊM: Dùng cho tìm kiếm
         'userAvatarUrl': userAvatarUrl,
         'tag': '#New', // TODO: Cho phép người dùng chọn Tag
         'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
         'likedBy': [], 'savedBy': [], 'privacy': _selectedPrivacy,
-        'imageUrl': imageUrl, // Lưu URL ảnh (có thể là null)
+        'imageUrl': imageUrl,
         'postCaption': caption, 'location': null, 'taggedUsers': [],
         'timestamp': FieldValue.serverTimestamp(),
       };
@@ -146,7 +144,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       ));
       Navigator.pop(context);
 
-    } catch (e) { /* ... Xử lý lỗi ... */ }
+    } catch (e) {
+      print("Lỗi đăng bài: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi đăng bài.'), backgroundColor: coralRed));
+    }
     finally { if (mounted) setState(() { _isSubmitting = false; }); }
   }
 
@@ -157,7 +158,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context)  {
     // Xác định ImageProvider từ _displayImageUrl (chỉ URL mạng hoặc null)
     ImageProvider? imageProvider;
     if (_displayImageUrl != null && _displayImageUrl!.isNotEmpty && _displayImageUrl!.startsWith('http')) {
@@ -171,6 +172,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
+        // THỐNG NHẤT NÚT BACK
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          onPressed: () => Navigator.of(context).pop(),
+          splashRadius: 28,
+        ),
         title: const Text('Tạo Bài Viết Mới', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: Colors.black, elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),

@@ -83,6 +83,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
+        // THỐNG NHẤT NÚT BACK
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          onPressed: () => Navigator.of(context).pop(),
+          splashRadius: 28,
+        ),
         title: Text('Bài viết của $postUserName', style: const TextStyle(color: Colors.white, fontSize: 18)),
         backgroundColor: Colors.black, elevation: 0.5, shadowColor: darkSurface,
         iconTheme: const IconThemeData(color: Colors.white),

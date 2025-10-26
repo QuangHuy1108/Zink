@@ -1,6 +1,7 @@
 // lib/login_screen.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'session_manager.dart'; // Quản lý trạng thái đăng nhập cục bộ
 import 'home_screen.dart'; // Màn hình chính sau khi đăng nhập
 import 'register_screen.dart'; // Màn hình đăng ký
@@ -9,7 +10,7 @@ import 'register_screen.dart'; // Màn hình đăng ký
 const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
-const Color coralRed = Color(0xFFFD402C); // Added for error messages
+const Color coralRed = Color(0xFFFD402C);
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,13 +23,14 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailOrPhoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   String? _errorMessage;
   bool _isLoading = false;
   bool _isPasswordVisible = false;
   bool _isEmailSelected = true;
 
-  // Hàm thực hiện đăng nhập (Giữ nguyên logic Firebase)
+  // Hàm thực hiện đăng nhập (Chỉ Email/Password)
   void _performLogin() async {
     FocusScope.of(context).unfocus();
     setState(() {
@@ -40,28 +42,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (input.isEmpty || password.isEmpty) {
       setState(() {
-        _errorMessage = 'Vui lòng điền đầy đủ thông tin.';
+        _errorMessage = 'Vui lòng điền đầy đủ Email và Mật khẩu.';
         _isLoading = false;
       });
       return;
     }
 
+    // --- XỬ LÝ ĐĂNG NHẬP BẰNG EMAIL/PASSWORD ONLY ---
     try {
-      if (!_isEmailSelected) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Chức năng đăng nhập bằng SĐT chưa được triển khai.'),
-              backgroundColor: sonicSilver,
-            ),
-          );
-        }
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
           email: input, password: password);
       if (userCredential.user != null) {
@@ -113,60 +101,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Widget _buildSocialButton(String label, IconData icon, Color iconColor) {
-    return Expanded(
-      child: OutlinedButton.icon(
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                  'Chức năng đăng nhập bằng $label chưa được triển khai.'),
-              backgroundColor: sonicSilver,
-            ),
-          );
-        },
-        icon: Icon(icon, color: iconColor, size: 24),
-        label: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontSize: 15),
-        ),
-        style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: sonicSilver),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToggleButton({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? topazColor : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: topazColor),
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.black : Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -191,37 +125,11 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // Toggle Email / Phone
-              Row(
-                children: [
-                  _buildToggleButton(
-                    label: 'Email',
-                    isSelected: _isEmailSelected,
-                    onTap: () {
-                      setState(() {
-                        _isEmailSelected = true;
-                      });
-                    },
-                  ),
-                  const SizedBox(width: 10),
-                  _buildToggleButton(
-                    label: 'SĐT',
-                    isSelected: !_isEmailSelected,
-                    onTap: () {
-                      setState(() {
-                        _isEmailSelected = false;
-                      });
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 25),
-
-              // Input fields
+              // Email Input
               TextField(
                 controller: _emailOrPhoneController,
                 decoration: InputDecoration(
-                  hintText: _isEmailSelected ? 'Email' : 'Số điện thoại',
+                  hintText: 'Email',
                   hintStyle: const TextStyle(color: sonicSilver),
                   filled: true,
                   fillColor: darkSurface,
@@ -229,10 +137,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                keyboardType:
-                _isEmailSelected ? TextInputType.emailAddress : TextInputType.phone,
+                keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 16),
+
+              // Mật khẩu
               TextField(
                 controller: _passwordController,
                 obscureText: !_isPasswordVisible,
@@ -257,6 +166,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
+
               const SizedBox(height: 12),
 
               Align(
@@ -302,29 +212,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 30),
 
-              // Divider "Hoặc đăng nhập với"
-              Row(
-                children: const [
-                  Expanded(child: Divider(color: sonicSilver)),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Text(
-                      'Hoặc đăng nhập với',
-                      style: TextStyle(color: sonicSilver),
-                    ),
-                  ),
-                  Expanded(child: Divider(color: sonicSilver)),
-                ],
-              ),
-              const SizedBox(height: 25),
-
-              Row(
-                children: [
-                  _buildSocialButton('Google', Icons.g_mobiledata_outlined, Colors.white),
-                ],
-              ),
-              const SizedBox(height: 35),
-
+              // LIÊN KẾT ĐĂNG KÝ
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

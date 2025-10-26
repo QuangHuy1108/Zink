@@ -401,14 +401,12 @@ class _ReelsScreenState extends State<ReelsScreen> {
 
           // 2. HEADER NỔI (Giữ nguyên)
           Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 16,
-            right: 16,
+            top: MediaQuery.of(context).padding.top + 10, left: 10, right: 10,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
                   onPressed: widget.onNavigateToHome,
                   splashRadius: 24,
                 ),

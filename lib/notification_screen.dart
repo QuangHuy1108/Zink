@@ -44,7 +44,7 @@ class PlaceholderScreen extends StatelessWidget {
 }
 
 // =======================================================
-// WIDGET: SocialNotificationTile (Không thay đổi logic)
+// WIDGET: SocialNotificationTile (Giữ nguyên)
 // =======================================================
 class SocialNotificationTile extends StatelessWidget {
   final DocumentSnapshot notificationDoc;
@@ -68,7 +68,6 @@ class SocialNotificationTile extends StatelessWidget {
       try {
         return NetworkImage(avatarUrl);
       } catch (e) {
-        print("Lỗi tải NetworkImage: $e");
         return null;
       }
     }
@@ -89,6 +88,7 @@ class SocialNotificationTile extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: topazColor, foregroundColor: Colors.black,
               minimumSize: const Size(80, 30), padding: EdgeInsets.zero,
+              disabledBackgroundColor: darkSurface,
             ),
             child: Text(actionTaken ? 'Đã chấp nhận' : 'Chấp nhận', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
           ),
@@ -144,6 +144,15 @@ class SocialNotificationTile extends StatelessWidget {
       case 'suggest_page': return topazColor;
       default: return sonicSilver;
     }
+  }
+
+  String _formatTimestampAgo(Timestamp timestamp) {
+    final DateTime dateTime = timestamp.toDate();
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
+    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
+    if (difference.inHours < 24) return '${difference.inHours} giờ';
+    return '${difference.inDays} ngày';
   }
 
 
@@ -222,18 +231,10 @@ class SocialNotificationTile extends StatelessWidget {
     );
   }
 
-  String _formatTimestampAgo(Timestamp timestamp) {
-    final DateTime dateTime = timestamp.toDate();
-    final difference = DateTime.now().difference(dateTime);
-    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
-    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
-    if (difference.inHours < 24) return '${difference.inHours} giờ';
-    return '${difference.inDays} ngày';
-  }
 }
 
 // =======================================================
-// MÀN HÌNH CHÍNH: NotificationScreen (ĐÃ SỬA LỖI NULL CHECK)
+// MÀN HÌNH CHÍNH: NotificationScreen (ĐÃ SỬA LỖI SCOPE)
 // =======================================================
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -247,23 +248,148 @@ class _NotificationScreenState extends State<NotificationScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   User? _currentUser;
 
+  // Helper functions used inside the class
+  String _formatTimestampAgo(Timestamp timestamp) {
+    final DateTime dateTime = timestamp.toDate();
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
+    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
+    if (difference.inHours < 24) return '${difference.inHours} giờ';
+    return '${difference.inDays} ngày';
+  }
+
+  ImageProvider? _getAvatarProvider(Map<String, dynamic> data) {
+    final String? avatarUrl = data['senderAvatarUrl'] as String?;
+    if (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http')) {
+      try { return NetworkImage(avatarUrl); } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  IconData _getIconForType(String type) {
+    switch (type) {
+      case 'like': return Icons.favorite_rounded;
+      case 'comment': return Icons.question_answer_rounded;
+      case 'my_post_save': return Icons.bookmark_rounded;
+      case 'suggest_page': return Icons.star_rounded;
+      case 'tag_post': case 'tag_comment': case 'tag_story': return Icons.alternate_email_rounded;
+      default: return Icons.notifications_none;
+    }
+  }
+
+  Color _getColorForType(String type) {
+    switch (type) {
+      case 'like': return coralRed;
+      case 'suggest_page': return topazColor;
+      default: return sonicSilver;
+    }
+  }
+
+  // Placeholder methods
+  void _showCommentSheetForPost(BuildContext context, Map<String, dynamic> postData) { /* ... */ }
+  void _showNotificationMenu(DocumentSnapshot notifDoc) { /* ... */ }
+  void _deleteNotification(DocumentSnapshot notifDoc) async { /* ... */ }
+
+
   @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _markNotificationsAsRead();
+    // _markNotificationsAsRead(); // Logic đánh dấu đã đọc khi mở màn hình
   }
 
   void _markNotificationsAsRead() async { /* ... */ }
-  void _handleSocialAction(DocumentSnapshot notifDoc, String action) async { /* ... */ }
+
+  void _markSingleNotificationAsRead(DocumentSnapshot notifDoc) async {
+    try {
+      await notifDoc.reference.update({'isRead': true});
+    } catch (e) {
+      print("Lỗi đánh dấu đã đọc: $e");
+    }
+  }
+
+  // LOGIC: Xử lý Chấp nhận hoặc Từ chối Yêu cầu Kết bạn (hoàn thiện)
+  void _handleSocialAction(DocumentSnapshot notifDoc, String action) async {
+    final recipientId = _currentUser?.uid;
+    final data = notifDoc.data() as Map<String, dynamic>? ?? {};
+    final senderId = data['senderId'] as String?;
+    final senderName = data['senderName'] as String? ?? 'Người dùng';
+    final type = data['type'] as String?;
+
+    // Đảm bảo không xử lý lại yêu cầu đã xử lý
+    if (recipientId == null || senderId == null || type != 'friend_request' || (data['actionTaken'] as bool? ?? false)) {
+      return;
+    }
+
+    final batch = _firestore.batch();
+    final recipientRef = _firestore.collection('users').doc(recipientId);
+    final senderRef = _firestore.collection('users').doc(senderId);
+    final notifRef = notifDoc.reference;
+
+    // 1. Cập nhật trạng thái thông báo (đã hành động)
+    batch.update(notifRef, {'actionTaken': true});
+
+    String message;
+
+    if (action == 'accept') {
+      // 2. Thêm vào mảng friendUids của cả hai bên
+      batch.update(recipientRef, {'friendUids': FieldValue.arrayUnion([senderId])});
+      batch.update(senderRef, {'friendUids': FieldValue.arrayUnion([recipientId])});
+
+      // 3. Xóa ID khỏi outgoingRequests của người gửi
+      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+
+      // 4. Tạo thông báo cho người gửi (đã chấp nhận)
+      final recipientName = _currentUser?.displayName ?? 'Người dùng';
+      batch.set(
+          _firestore.collection('users').doc(senderId).collection('notifications').doc(),
+          {
+            'type': 'friend_accept',
+            'senderId': recipientId,
+            'senderName': recipientName,
+            'senderAvatarUrl': _currentUser?.photoURL,
+            'destinationId': recipientId,
+            'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          }
+      );
+      message = 'Đã chấp nhận lời mời kết bạn từ $senderName.';
+
+    } else if (action == 'reject') {
+      // 2. Xóa ID khỏi outgoingRequests của người gửi
+      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+
+      // 3. Xóa thông báo khỏi danh sách người nhận
+      batch.delete(notifRef);
+      message = 'Đã từ chối lời mời kết bạn từ $senderName.';
+
+    } else {
+      return;
+    }
+
+    try {
+      await batch.commit();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: topazColor));
+        if (action == 'accept') {
+          _markSingleNotificationAsRead(notifDoc);
+        }
+      }
+    } catch (e) {
+      print("Lỗi xử lý yêu cầu kết bạn: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Xử lý yêu cầu không thành công.'), backgroundColor: coralRed));
+    }
+  }
+
   void _handleProfileTap(DocumentSnapshot notifDoc) { /* ... */ }
+
   void _handleTap(DocumentSnapshot notifDoc) async {
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
     final destinationId = data['destinationId'] as String?;
     final type = data['type'] as String?;
     final senderName = data['senderName'] as String? ?? 'Người dùng';
 
-    // THÊM KIỂM TRA NULL AN TOÀN CHO _currentUser trước khi sử dụng photoURL/displayName
     final currentUserId = _currentUser?.uid;
 
     if (destinationId == null || type == null) { /* Show error */ return; }
@@ -276,16 +402,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
           Map<String, dynamic> postData = postDoc.data()!;
           postData['id'] = postDoc.id;
 
-          // SỬA LỖI: Sử dụng currentUserId đã được kiểm tra null
-          // ... (logic xử lý counts, isLiked, isSaved)
           final List<String> likedByList = List<String>.from(postData['likedBy'] ?? []);
           final List<String> savedByList = List<String>.from(postData['savedBy'] ?? []);
           postData['isLiked'] = currentUserId != null && likedByList.contains(currentUserId);
           postData['isSaved'] = currentUserId != null && savedByList.contains(currentUserId);
 
-          // --- Xóa fallback ảnh asset ---
-          postData['userAvatarUrl'] = postData['userAvatarUrl']; // Chỉ lấy URL
-          postData['imageUrl'] = postData['imageUrl']; // Chỉ lấy URL
+          postData['userAvatarUrl'] = postData['userAvatarUrl'];
+          postData['imageUrl'] = postData['imageUrl'];
           postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp']!) : '';
 
           if (type == 'comment' || type == 'tag_comment') {
@@ -299,10 +422,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết không còn tồn tại.');
         }
       } else if (['my_story_like', 'my_story_share', 'tag_story'].contains(type)) {
-        // --- Cập nhật avatarUrl khi mở StoryViewScreen ---
         String avatarUrl = (type == 'tag_story')
             ? (data['senderAvatarUrl'] ?? '')
-        // SỬA LỖI: Truy cập photoURL an toàn hơn
             : (_currentUser?.photoURL ?? '');
 
         targetScreen = StoryViewScreen(
@@ -316,49 +437,38 @@ class _NotificationScreenState extends State<NotificationScreen> {
         targetScreen = PlaceholderScreen(title: 'Chi tiết thông báo', content: 'Đích đến: $destinationId');
       }
       if (targetScreen != null && mounted) {
-        // Đảm bảo đánh dấu đã đọc sau khi điều hướng thành công
         Navigator.push(context, MaterialPageRoute(builder: (context) => targetScreen!))
             .then((_) => _markSingleNotificationAsRead(notifDoc));
       }
     } catch (e) { print("Lỗi xử lý thông báo tap: $e"); /* Handle error */ }
   }
-  void _showCommentSheetForPost(BuildContext context, Map<String, dynamic> postData) { /* ... */ }
-  void _showNotificationMenu(DocumentSnapshot notifDoc) { /* ... */ }
-  void _deleteNotification(DocumentSnapshot notifDoc) async { /* ... */ }
-  void _markSingleNotificationAsRead(DocumentSnapshot notifDoc) async { /* ... */ }
-  ImageProvider? _getAvatarProvider(Map<String, dynamic> data) { /* ... */ return null; }
-  IconData _getIconForType(String type) { /* ... */ return Icons.notifications_none; }
-  Color _getColorForType(String type) { /* ... */ return sonicSilver; }
-  String _formatTimestampAgo(Timestamp timestamp) { /* ... */ return ''; }
 
 
   @override
   Widget build(BuildContext context) {
-    // SỬA LỖI: Kiểm tra an toàn cho _currentUser.uid và thoát sớm nếu null.
     final currentUserId = _currentUser?.uid;
 
     if (currentUserId == null) {
-      // ... (Giao diện yêu cầu đăng nhập đã sửa lỗi const trước đó)
-      return Scaffold(
+      return const Scaffold(
         backgroundColor: Colors.black,
-        appBar: AppBar(
-          title: const Text('Thông báo', style: TextStyle(color: Colors.white)),
-          backgroundColor: Colors.black,
-          iconTheme: const IconThemeData(color: Colors.white),
-        ),
-        body: const Center(child: Text('Vui lòng đăng nhập để xem thông báo.', style: TextStyle(color: sonicSilver))),
+        body: Center(child: Text('Vui lòng đăng nhập để xem thông báo.', style: TextStyle(color: sonicSilver))),
       );
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
+        // THỐNG NHẤT NÚT BACK
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          onPressed: () => Navigator.of(context).pop(),
+          splashRadius: 28,
+        ),
         title: const Text('Thông báo', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 20)),
         backgroundColor: Colors.black, elevation: 0.5, shadowColor: darkSurface,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: StreamBuilder<QuerySnapshot>(
-        // SỬ DỤNG currentUserId đã kiểm tra null
         stream: _firestore.collection('users').doc(currentUserId).collection('notifications')
             .orderBy('timestamp', descending: true).limit(50).snapshots(),
         builder: (context, snapshot) {
@@ -374,15 +484,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
             return const Center(child: Text('Không có thông báo mới.', style: TextStyle(color: sonicSilver)));
           }
 
-          // Lỗi RenderIndexedSemantics thường do ListView không giới hạn trong Column/Row.
-          // Ở đây, ListView nằm trực tiếp trong StreamBuilder/Scaffold body, nên nó có kích thước giới hạn.
-          // Nếu lỗi Layout vẫn xảy ra, nó có thể đến từ một trong các widget con
-          // được import và sử dụng trong _handleTap (như PlaceholderScreen, PostDetailScreen, CommentSheet, v.v.)
-          // nhưng hiện tại tôi chỉ sửa lỗi Null Check.
-
           return ListView.separated(
             itemCount: notificationDocs.length,
-            // ... (Phần itemBuilder giữ nguyên) ...
             itemBuilder: (context, index) {
               final notifDoc = notificationDocs[index];
               final data = notifDoc.data() as Map<String, dynamic>? ?? {};
