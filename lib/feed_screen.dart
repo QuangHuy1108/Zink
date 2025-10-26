@@ -1,27 +1,28 @@
+// lib/feed_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// SỬA LỖI XUNG ĐỘT IMPORT:
-import 'profile_screen.dart' hide MessageScreen; // <--- ĐÃ SỬA: Ẩn MessageScreen để tránh xung đột
-import 'comment_screen.dart'; // Giữ lại Comment và CommentBottomSheetContent từ file này
+// Import các màn hình và widget khác
+import 'profile_screen.dart' hide MessageScreen;
+import 'comment_screen.dart';
 import 'share_sheet.dart';
 import 'search_screen.dart';
-// Ẩn các định nghĩa trùng lặp từ các file khác:
 import 'notification_screen.dart' hide Comment, StoryViewScreen, CommentBottomSheetContent, ProfileScreen;
-import 'create_story_screen.dart' hide StoryState; // feed_screen có định nghĩa StoryState riêng
-import 'story_view_screen.dart' hide StoryContent; // create_story_screen đã định nghĩa StoryContent
+import 'create_story_screen.dart' hide StoryState;
+import 'story_view_screen.dart' hide StoryContent;
 import 'story_manager_screen.dart' hide StoryContent;
 import 'suggested_friend_card.dart' hide ProfileScreen;
 import 'post_detail_screen.dart';
-import 'message_screen.dart'; // <-- ĐÃ THÊM: Import màn hình nhắn tin
+import 'message_screen.dart';
 
-// --- Định nghĩa Comment (Giữ lại hoặc import từ file riêng) ---
+// --- Định nghĩa Comment ---
 class Comment {
   final String id;
   final String userId;
   final String userName;
-  final String? userAvatarUrl; // Chỉ dùng URL
+  final String? userAvatarUrl;
   final String text;
   final Timestamp timestamp;
   final String? parentId;
@@ -48,12 +49,12 @@ class Comment {
     return Comment(
       id: doc.id,
       userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Người dùng Zink', // ĐÃ SỬA: Tên mặc định an toàn hơn
-      userAvatarUrl: data['userAvatarUrl'], // Lấy URL (có thể null)
+      userName: data['userName'] ?? 'Người dùng Zink',
+      userAvatarUrl: data['userAvatarUrl'],
       text: data['text'] ?? '',
       timestamp: data['timestamp'] ?? Timestamp.now(),
       parentId: data['parentId'],
-      likesCount: (data['likesCount'] is num ? (data['likesCount'] as num).toInt() : 0), // Ensure int
+      likesCount: (data['likesCount'] is num ? (data['likesCount'] as num).toInt() : 0),
       likedBy: likedByList,
       isLiked: currentUserId.isNotEmpty && likedByList.contains(currentUserId),
     );
@@ -62,7 +63,7 @@ class Comment {
 // --- Kết thúc định nghĩa Comment ---
 
 // =======================================================
-// CONSTANTS (Giữ lại)
+// CONSTANTS
 // =======================================================
 const Color topazColor = Color(0xFFF6C886);
 const Color earthYellow = Color(0xFFE0A263);
@@ -71,7 +72,7 @@ const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color activeGreen = Color(0xFF32CD32);
 
-// --- Story State (Giữ lại tạm thời nếu các màn hình khác cần) ---
+// --- Story State ---
 class StoryContent {
   final String text;
   final Offset textPosition;
@@ -98,14 +99,13 @@ class StoryState {
     if (lastPostTime == null) return false;
     return DateTime.now().difference(lastPostTime!) < const Duration(hours: 24);
   }
-// No longer need selfStoryData referencing assets
 }
 final StoryState globalUserStoryState = StoryState();
 // --- Kết thúc Story State ---
 
 
 // =======================================================
-// WIDGET CHUÔNG THÔNG BÁO (Giữ nguyên)
+// WIDGET CHUÔNG THÔNG BÁO
 // =======================================================
 class AnimatedNotificationBell extends StatefulWidget {
   final VoidCallback onOpenNotification;
@@ -122,7 +122,7 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Stream<QuerySnapshot>? _notificationStream; // Stream listener
+  Stream<QuerySnapshot>? _notificationStream;
 
   @override
   void initState() {
@@ -130,22 +130,20 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
     _controller = AnimationController(duration: const Duration(milliseconds: 500), vsync: this);
     _animation = Tween(begin: 0.0, end: 5.0).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticOut));
 
-    _listenForNotifications(); // Start listening
+    _listenForNotifications();
   }
 
   void _listenForNotifications() {
     final user = _auth.currentUser;
     if (user != null) {
-      // Create the stream
       _notificationStream = _firestore
           .collection('users')
           .doc(user.uid)
           .collection('notifications')
           .where('isRead', isEqualTo: false)
-          .limit(1) // Only need to know if at least one exists
+          .limit(1)
           .snapshots();
 
-      // Listen to the stream
       _notificationStream?.listen((snapshot) {
         final hasUnread = snapshot.docs.isNotEmpty;
         if (mounted && hasUnread != _hasNotification) {
@@ -161,7 +159,6 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
         }
       }, onError: (error) {
         print("Error listening for notifications: $error");
-        // Optionally handle the error, e.g., set _hasNotification to false
         if (mounted) {
           setState(() { _hasNotification = false; });
           _controller.stop();
@@ -169,7 +166,6 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
         }
       });
     } else {
-      // Handle case where user is null (e.g., logged out)
       if (mounted) {
         setState(() { _hasNotification = false; });
         _controller.stop();
@@ -182,7 +178,6 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
   @override
   void dispose() {
     _controller.dispose();
-    // Cancel the stream listener if needed, though streams usually handle this
     super.dispose();
   }
 
@@ -201,15 +196,14 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
         icon: Icon(
             _hasNotification ? Icons.notifications_active : Icons.notifications_none,
             color: _hasNotification ? topazColor : sonicSilver,
-            size: 28
+            size: 24 // Giảm kích thước icon
         ),
         onPressed: () {
-          // UI update will happen via stream when NotificationScreen marks as read
-          widget.onOpenNotification(); // Open notification screen
+          widget.onOpenNotification();
         },
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
-        splashRadius: 24,
+        splashRadius: 20, // Giảm splash radius
       ),
     );
   }
@@ -230,24 +224,24 @@ class _FeedScreenState extends State<FeedScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? _currentUser;
-  Stream<QuerySnapshot>? _storiesStream; // Stream for active stories
-  Map<String, bool> _viewedStories = {}; // Local state to track viewed stories in this session
+  Stream<QuerySnapshot>? _storiesStream;
+  Map<String, bool> _viewedStories = {};
+
+  final double _headerContentHeight = 45.0; // Giữ nguyên chiều cao nhỏ
 
   @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _loadActiveStories(); // Load stories initially
+    _loadActiveStories();
   }
 
   void _loadActiveStories() {
-    // Query stories collection for active stories (expiresAt > now)
-    // You might want to filter further (e.g., only friends' stories)
     _storiesStream = _firestore
         .collection('stories')
         .where('expiresAt', isGreaterThan: Timestamp.now())
-        .orderBy('expiresAt') // Or orderBy timestamp
-        .limit(20) // Limit initial load
+        .orderBy('expiresAt')
+        .limit(20)
         .snapshots();
   }
 
@@ -256,7 +250,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
   void _navigateToStoryScreen(Widget screen, VoidCallback onClosed) {
     Navigator.of(context).push(
-      PageRouteBuilder( /* ... transitions ... */
+      PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) => screen,
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final backgroundScale = Tween<double>(begin: 1.0, end: 0.95).animate(CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeOut));
@@ -273,45 +267,37 @@ class _FeedScreenState extends State<FeedScreen> {
     ).then((_) => onClosed());
   }
 
-  String _formatActivityTime(DateTime? lastActive, bool isOnline) { /* ... Giữ nguyên ... */ return ''; }
+  String _formatActivityTime(DateTime? lastActive, bool isOnline) { return ''; }
 
-  // Logic Refresh Feed (Cập nhật để fetch lại data)
   Future<void> _handleRefresh() async {
-    // Reset viewed stories locally
     setState(() {
       _viewedStories.clear();
     });
-    // Re-trigger stream builders by calling setState (or fetch specific data)
-    _loadActiveStories(); // Reload stories stream
-    setState(() {}); // Trigger rebuild for post feed StreamBuilder
-    // Giả lập thời gian tải lại
+    _loadActiveStories();
+    setState(() {});
     await Future.delayed(const Duration(milliseconds: 500));
     print("Refresh Feed...");
   }
 
-  // Widget Story Avatar nhỏ (Sử dụng data từ Firestore Stream)
   Widget _buildSmallStoryAvatar(BuildContext context, DocumentSnapshot storyDoc) {
     final storyData = storyDoc.data() as Map<String, dynamic>? ?? {};
     final String storyUserId = storyData['userId'] ?? '';
     final String storyUserName = storyData['userName'] ?? 'Người dùng';
     final String? storyUserAvatarUrl = storyData['userAvatarUrl'] as String?;
-    final String storyId = storyDoc.id; // Unique ID for this story document
+    final String storyId = storyDoc.id;
 
     final bool isCurrentUserStory = storyUserId == _currentUser?.uid;
-    // Use local state _viewedStories to track viewed stories in this session
     final bool storyViewed = _viewedStories[storyId] ?? false;
 
-    // Xác định ImageProvider từ URL hoặc null
     final ImageProvider? avatarProvider = (storyUserAvatarUrl != null && storyUserAvatarUrl.isNotEmpty)
         ? NetworkImage(storyUserAvatarUrl)
         : null;
 
-    // Viền avatar
     final BoxDecoration avatarBorder = (!storyViewed)
         ? BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(
-          colors: [topazColor.withOpacity(0.8), earthYellow.withOpacity(0.8)], // Cung cấp màu
+          colors: [topazColor.withOpacity(0.8), earthYellow.withOpacity(0.8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         )
@@ -320,18 +306,14 @@ class _FeedScreenState extends State<FeedScreen> {
 
     return GestureDetector(
       onTap: () {
-        // Truyền thông tin story vào StoryViewScreen
-        // Cần lấy danh sách các story IDs của *cùng user này*
-        // Điều này yêu cầu query phức tạp hơn hoặc thay đổi cấu trúc data
-        // Tạm thời chỉ xem story này
-        if (!isCurrentUserStory) { // Mark as viewed when tapping others' stories
+        if (!isCurrentUserStory) {
           setState(() { _viewedStories[storyId] = true; });
         }
         _navigateToStoryScreen(
             StoryViewScreen(
                 userName: storyUserName,
-                avatarUrl: storyUserAvatarUrl, // Tham số này đã chấp nhận null
-                storyDocs: [storyDoc] // Sửa lỗi: Truyền [storyDoc] cho tham số storyDocs
+                avatarUrl: storyUserAvatarUrl,
+                storyDocs: [storyDoc]
             ),
             _forceRebuild
         );
@@ -354,7 +336,7 @@ class _FeedScreenState extends State<FeedScreen> {
             ),
             const SizedBox(height: 5),
             Text(
-              isCurrentUserStory ? 'Tin của bạn' : storyUserName.split(' ').first, // Hiển thị tên ngắn gọn
+              isCurrentUserStory ? 'Tin của bạn' : storyUserName.split(' ').first,
               style: TextStyle(
                 color: (!storyViewed) ? Colors.white : sonicSilver,
                 fontSize: 12,
@@ -369,7 +351,6 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
-  // Avatar của chính user để tạo story
   Widget _buildMyStoryCreatorAvatar(BuildContext context) {
     final String? currentUserAvatar = _currentUser?.photoURL;
     final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
@@ -378,11 +359,8 @@ class _FeedScreenState extends State<FeedScreen> {
 
     return GestureDetector(
       onTap: () {
-        // Navigate based on whether the user already has an active story
-        // This requires checking the _storiesStream or querying Firestore
-        // For simplicity, always navigate to CreateStoryScreen for now
         Navigator.of(context).push(MaterialPageRoute(builder: (context) => const CreateStoryScreen()))
-            .then((_) => _forceRebuild()); // Rebuild FeedScreen when returning
+            .then((_) => _forceRebuild());
       },
       child: Container(
         width: 70,
@@ -390,7 +368,7 @@ class _FeedScreenState extends State<FeedScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Stack( // Use Stack to add the '+' icon
+            Stack(
               alignment: Alignment.bottomRight,
               children: [
                 CircleAvatar(
@@ -399,10 +377,10 @@ class _FeedScreenState extends State<FeedScreen> {
                   backgroundImage: avatarProvider,
                   child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 30) : null,
                 ),
-                Container( // Blue '+' icon
+                Container(
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    color: Colors.blueAccent, // Or topazColor
+                    color: Colors.blueAccent,
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.black, width: 1.5),
                   ),
@@ -413,7 +391,7 @@ class _FeedScreenState extends State<FeedScreen> {
             const SizedBox(height: 5),
             const Text(
               'Tin của bạn',
-              style: TextStyle(color: Colors.white, fontSize: 12), // Always white for creator
+              style: TextStyle(color: Colors.white, fontSize: 12),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
             ),
@@ -424,165 +402,133 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
 
-  // Helper kiểm tra online/hoạt động gần đây (Giữ nguyên)
-  bool isOnlineOrRecent(DateTime? lastActive) { /* ... */ return false; }
-
-  // Helper điều hướng đến Profile Screen (Giữ nguyên)
+  bool isOnlineOrRecent(DateTime? lastActive) { return false; }
   void _navigateToProfile(String targetUsernameOrUid) { /* ... */ }
 
-  // Widget Header đơn giản (Không dùng ảnh asset)
-  Widget _buildSimpleHeader(BuildContext context) {
-    // ĐÃ XÓA: Lấy thông tin Avatar và CurrentUser để hiển thị
-    // final String? currentUserAvatar = _currentUser?.photoURL;
-    // final String currentUsername = _currentUser?.displayName ?? 'You';
-    // final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
-    //     ? NetworkImage(currentUserAvatar)
-    //     : null;
-
-    return Padding(
-      padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 10, bottom: 10, left: 16, right: 16),
+  // Widget header nội dung (không bao gồm padding status bar)
+  Widget _buildHeaderContent() {
+    return Container(
+      color: Colors.black,
+      height: _headerContentHeight - 10, // Chiều cao nội dung (45 - 10 = 35)
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Tiêu đề chính (ví dụ: Logo Zink hoặc "Feed")
+          // =======================================================
+          // THAY ĐỔI: Tăng kích thước chữ "Zink"
+          // =======================================================
           const Text(
-            'Zink', // Hoặc tên ứng dụng
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: topazColor),
+            'Zink',
+            style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: topazColor), // Tăng fontSize lên 32
           ),
           const Spacer(),
-          // Nút Search
           IconButton(
-            icon: const Icon(Icons.search, color: sonicSilver, size: 28),
+            icon: const Icon(Icons.search, color: sonicSilver, size: 24),
             onPressed: () {
-              // SỬA LỖI: Đảm bảo nút Search gọi đúng SearchScreen
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SearchScreen()));
             },
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(), // SỬA LỖI: Thêm constraints
-            splashRadius: 24,
+            constraints: const BoxConstraints(),
+            splashRadius: 20,
           ),
-          const SizedBox(width: 10),
-          // Chuông Thông báo
+          const SizedBox(width: 8),
           AnimatedNotificationBell(
             onOpenNotification: () {
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => const NotificationScreen()));
             },
           ),
-          const SizedBox(width: 10), // Khoảng cách giữa Chuông và Tin nhắn
-          // Nút Tin nhắn (Message)
+          const SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 28), // ĐÃ ĐỔI: Icon từ send_rounded sang message_outlined
+            icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 24),
             onPressed: () {
-              // Điều hướng đến MessageScreen (Hiện là placeholder)
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (context) => const MessageScreen()),
               );
             },
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
-            splashRadius: 24,
+            splashRadius: 20,
           ),
         ],
       ),
     );
   }
 
-  // Widget Gợi ý kết bạn (Không dùng ảnh asset)
+
   Widget _buildSuggestedFriendsSection(BuildContext context) {
-    // TODO: Lấy danh sách gợi ý từ Firestore/Backend
-    // ĐÃ XÓA MOCK DATA VÀ THAY BẰNG DANH SÁCH RỖNG
     final List<Map<String, dynamic>> suggestedFriends = [];
-
-    if (suggestedFriends.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start, // Thêm căn lề trái
-      children: [
-        // ĐÃ SỬA: Loại bỏ padding trên
-        const Padding(
-          padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 0.0, bottom: 8.0), // ĐẶT TOP LÀ 0.0
-          child: Text(
-            'Gợi ý cho bạn',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-        ),
-        SizedBox(
-          height: 200,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal, // Thêm hướng cuộn
-            padding: const EdgeInsets.symmetric(horizontal: 16.0), // Thêm padding cho ListView
-            itemCount: suggestedFriends.length,
-            itemBuilder: (context, index) {
-              final friend = suggestedFriends[index];
-              return SuggestedFriendCard( // SuggestedFriendCard handles null avatarUrl
-                key: ValueKey(friend['uid']),
-                friendData: friend,
-                onStateChange: _forceRebuild,
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 10),
-      ],
-    );
+    if (suggestedFriends.isEmpty) { return const SizedBox.shrink(); }
+    return Column( /*...*/ );
   }
 
-  // Widget hiển thị danh sách bài viết (Không dùng ảnh asset)
-  Widget _buildPostFeed() {
+  // Widget hiển thị danh sách bài viết (TRẢ VỀ SLIVERLIST)
+  Widget _buildPostFeedSliver() {
     final currentUserId = _currentUser?.uid ?? '';
     Query query = _firestore.collection('posts').orderBy('timestamp', descending: true);
-    // if (_selectedTag != 'All') { /* ... filter by tag ... */ } // ĐÃ XÓA: Logic filter theo Tag
 
     return StreamBuilder<QuerySnapshot>(
       stream: query.limit(20).snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Padding(
-              padding: EdgeInsets.only(top: 50.0),
-              child: CircularProgressIndicator(color: topazColor)
-          ));
+          return const SliverFillRemaining(
+            child: Center(child: CircularProgressIndicator(color: topazColor)),
+            hasScrollBody: false,
+          );
         }
         if (snapshot.hasError) {
           print("Lỗi tải bài viết: ${snapshot.error}");
-          return Center(child: Text('Lỗi tải bài viết: ${snapshot.error}', style: const TextStyle(color: coralRed)));
+          return SliverFillRemaining(
+            child: Center(child: Text('Lỗi tải bài viết: ${snapshot.error}', style: const TextStyle(color: coralRed))),
+            hasScrollBody: false,
+          );
         }
 
-        // SỬA LỖI: Tránh Null Check Operator
-        final posts = snapshot.data?.docs ?? []; // Lấy docs hoặc danh sách rỗng
+        final posts = snapshot.data?.docs ?? [];
         if (posts.isEmpty) {
-          return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver))));
+          return SliverFillRemaining(
+            child: const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver)))),
+            hasScrollBody: false,
+          );
         }
-        return ListView.builder(
-          itemCount: posts.length,
-          physics: const NeverScrollableScrollPhysics(),
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(horizontal: 16.0).copyWith(top: 10),
-          itemBuilder: (context, index) {
-            final doc = posts[index];
-            Map<String, dynamic> postData = doc.data() as Map<String, dynamic>? ?? {}; // Handle null data
-            postData['id'] = doc.id;
 
-            // ... (Process likes, comments, shares, isLiked, isSaved) ...
+        // =======================================================
+        // THAY ĐỔI: Sử dụng SliverList thay vì SliverList.separated
+        // =======================================================
+        return SliverList(
+          delegate: SliverChildBuilderDelegate(
+                (context, index) {
+              final doc = posts[index];
+              Map<String, dynamic> postData = doc.data() as Map<String, dynamic>? ?? {};
+              postData['id'] = doc.id;
 
-            // Get URLs directly, allow null
-            postData['userAvatarUrl'] = postData['userAvatarUrl'];
-            postData['imageUrl'] = postData['imageUrl'];
+              postData['userAvatarUrl'] = postData['userAvatarUrl'];
+              postData['imageUrl'] = postData['imageUrl'];
 
-            postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp']) : 'Vừa xong';
+              postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp']) : 'Vừa xong';
 
-            return PostCard( // PostCard handles null URLs
-              key: ValueKey(postData['id']),
-              postData: postData,
-              onStateChange: _forceRebuild,
-            );
-          },
+              // Thêm khoảng cách dưới cho mỗi PostCard (ngoại trừ cái cuối cùng)
+              return Padding(
+                padding: EdgeInsets.only(
+                  left: 16.0,
+                  right: 16.0,
+                  // Thêm padding bottom nếu không phải item cuối
+                  bottom: index < posts.length - 1 ? 8.0 : 0, // Ví dụ khoảng cách 8.0
+                ),
+                child: PostCard(
+                  key: ValueKey(postData['id']),
+                  postData: postData,
+                  onStateChange: _forceRebuild,
+                ),
+              );
+            },
+            childCount: posts.length,
+          ),
         );
       },
     );
   }
 
-  // --- Hàm format Timestamp (Giữ nguyên) ---
+
   String _formatTimestampAgo(Timestamp timestamp) {
     final DateTime dateTime = timestamp.toDate();
     final difference = DateTime.now().difference(dateTime);
@@ -595,81 +541,107 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final double topPadding = MediaQuery.of(context).padding.top;
+    final double appBarTotalHeight = topPadding + _headerContentHeight;
+    final double collapsedAppBarHeight = (kToolbarHeight + topPadding < appBarTotalHeight) ? kToolbarHeight + topPadding : appBarTotalHeight;
+
+
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.black,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+    ));
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: RefreshIndicator(
         onRefresh: _handleRefresh,
         color: topazColor,
         backgroundColor: darkSurface,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildSimpleHeader(context),
+        displacement: appBarTotalHeight,
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+          slivers: <Widget>[
+            SliverAppBar(
+              backgroundColor: Colors.black,
+              floating: true,
+              pinned: false,
+              elevation: 0,
+              automaticallyImplyLeading: false,
+              expandedHeight: appBarTotalHeight,
+              collapsedHeight: collapsedAppBarHeight,
+              toolbarHeight: collapsedAppBarHeight,
+              flexibleSpace: FlexibleSpaceBar(
+                background: Container(
+                  color: Colors.black,
+                  padding: EdgeInsets.only(
+                      top: topPadding + 5,
+                      bottom: 5
+                  ),
+                  child: _buildHeaderContent(),
+                ),
+                titlePadding: EdgeInsets.zero,
+                centerTitle: false,
+                title: const SizedBox.shrink(),
+              ),
+              titleSpacing: 0,
+            ),
 
-              // Story Avatars Row (using StreamBuilder)
-              SizedBox(
-                height: 110,
+            // Story Avatars Row
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 100,
                 child: StreamBuilder<QuerySnapshot>(
-                    stream: _storiesStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting && !_storiesStreamHasData(snapshot)) {
-                        // Show minimal loading or nothing while waiting for initial data
-                        return const SizedBox.shrink(); // Or a subtle indicator
-                      }
-                      if (snapshot.hasError) {
-                        return const Center(child: Icon(Icons.error_outline, color: sonicSilver));
-                      }
-                      if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                        // Only show "My Story" creator if no other stories exist
-                        return ListView(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          children: [_buildMyStoryCreatorAvatar(context)],
-                        );
-                      }
-
-                      // Lọc Story Docs: Chỉ giữ Story của người dùng hiện tại
-                      final currentUserId = _currentUser?.uid;
-                      final List<DocumentSnapshot> myStoryDocs = snapshot.data!.docs
-                          .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] == currentUserId)
-                          .toList();
-
-                      // Nếu có Story của người dùng khác, chúng ta loại bỏ chúng khỏi danh sách hiển thị.
-                      // Lựa chọn 1: Giữ lại "Tin của bạn" và loại bỏ phần liệt kê Story khác.
+                  stream: _storiesStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting && !_storiesStreamHasData(snapshot)) {
+                      return const SizedBox.shrink();
+                    }
+                    if (snapshot.hasError) {
+                      return const Center(child: Icon(Icons.error_outline, color: sonicSilver));
+                    }
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return ListView(
                         scrollDirection: Axis.horizontal,
                         padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        children: [
-                          _buildMyStoryCreatorAvatar(context), // Luôn hiển thị "Tin của bạn"
-                          // ĐÃ XÓA: Phần hiển thị Story của người dùng khác
-                          // ...storyDocs
-                          //     .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] != _currentUser?.uid)
-                          //     .map((doc) => _buildSmallStoryAvatar(context, doc))
-                          //     .toList(),
-                        ],
+                        children: [_buildMyStoryCreatorAvatar(context)],
                       );
                     }
+                    final currentUserId = _currentUser?.uid;
+                    return ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      children: [
+                        _buildMyStoryCreatorAvatar(context),
+                        ...snapshot.data!.docs
+                            .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] != currentUserId)
+                            .map((doc) => _buildSmallStoryAvatar(context, doc))
+                            .toList(),
+                      ],
+                    );
+                  },
                 ),
               ),
-              const SizedBox(height: 5), // ĐÃ SỬA: Giảm khoảng cách sau Stories xuống 5px
+            ),
 
-              // Suggested Friends
-              _buildSuggestedFriendsSection(context),
-              // ĐÃ XÓA: Đường gạch xám dày
-              // const Divider(color: darkSurface, height: 1, thickness: 8),
+            // Suggested Friends
+            SliverToBoxAdapter(
+              child: _buildSuggestedFriendsSection(context),
+            ),
 
-              _buildPostFeed(), // Post Feed (Updated)
-              const SizedBox(height: 50),
-            ],
-          ),
+            // Post Feed
+            _buildPostFeedSliver(),
+
+            // Padding cuối cùng
+            const SliverToBoxAdapter(
+              child: SizedBox(height: 50),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // Helper to check if the stories stream has emitted data at least once
   bool _storiesStreamHasData(AsyncSnapshot<QuerySnapshot> snapshot) {
     return snapshot.connectionState != ConnectionState.waiting || (snapshot.hasData || snapshot.hasError);
   }
@@ -678,7 +650,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
 
 // =======================================================
-// PostCard Widget (Đã cập nhật để xử lý avatar/image null)
+// PostCard Widget
 // =======================================================
 class PostCard extends StatefulWidget {
   final Map<String, dynamic> postData;
@@ -695,7 +667,7 @@ class _PostCardState extends State<PostCard> {
   User? _currentUser;
   late String _postId;
   late bool _isLiked;
-  late bool _isSaved; // TRẠNG THÁI LƯU BÀI VIẾT
+  late bool _isSaved;
   late int _likesCount;
   late int _commentsCount;
   late int _sharesCount;
@@ -718,13 +690,12 @@ class _PostCardState extends State<PostCard> {
   void _updateStateFromWidget() {
     _postId = widget.postData['id'] as String? ?? '';
     _isLiked = widget.postData['isLiked'] as bool? ?? false;
-    _isSaved = widget.postData['isSaved'] as bool? ?? false; // LẤY TRẠNG THÁI LƯU
+    _isSaved = widget.postData['isSaved'] as bool? ?? false;
     _likesCount = widget.postData['likes'] as int? ?? 0;
     _commentsCount = widget.postData['comments'] as int? ?? 0;
     _sharesCount = widget.postData['shares'] as int? ?? 0;
   }
 
-  // --- Firestore Update Logic (_updateFirestoreLike, _updateFirestoreSave) ---
   void _updateFirestoreLike() {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
@@ -733,28 +704,20 @@ class _PostCardState extends State<PostCard> {
         ? {'likedBy': FieldValue.arrayUnion([userId]), 'likesCount': FieldValue.increment(1)}
         : {'likedBy': FieldValue.arrayRemove([userId]), 'likesCount': FieldValue.increment(-1)};
     postRef.update(updateData).catchError((e) => print("Error updating like: $e"));
-    // TODO: Add notification logic
   }
 
   void _updateFirestoreSave() {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
     final postRef = _firestore.collection('posts').doc(_postId);
-
-    // LOGIC CỐ ĐỊNH: Nếu đang lưu (true) thì xóa user khỏi savedBy, ngược lại thì thêm vào.
     final updateData = _isSaved
-        ? {'savedBy': FieldValue.arrayRemove([userId])} // Bỏ lưu khi _isSaved là TRUE
-        : {'savedBy': FieldValue.arrayUnion([userId])}; // Lưu khi _isSaved là FALSE
-
+        ? {'savedBy': FieldValue.arrayRemove([userId])}
+        : {'savedBy': FieldValue.arrayUnion([userId])};
     postRef.update(updateData).catchError((e) => print("Error updating save: $e"));
-
-    // Cập nhật trạng thái hiển thị trong ProfileScreen ngay lập tức.
-    // (ProfileScreen đã được sửa để lắng nghe thay đổi trong savedBy)
   }
 
-  // --- UI Toggles (_toggleLike, _toggleSave) ---
   void _toggleLike() {
-    if (_currentUser == null) return; // Prevent action if not logged in
+    if (_currentUser == null) return;
     setState(() {
       _isLiked = !_isLiked;
       _likesCount += _isLiked ? 1 : -1;
@@ -763,9 +726,9 @@ class _PostCardState extends State<PostCard> {
   }
 
   void _toggleSave() {
-    if (_currentUser == null) return; // Prevent action if not logged in
-    setState(() { _isSaved = !_isSaved; }); // Đảo ngược trạng thái UI trước
-    _updateFirestoreSave(); // Gọi hàm cập nhật Firestore
+    if (_currentUser == null) return;
+    setState(() { _isSaved = !_isSaved; });
+    _updateFirestoreSave();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(_isSaved ? 'Đã lưu bài viết!' : 'Đã bỏ lưu bài viết.'),
       backgroundColor: _isSaved ? topazColor : sonicSilver,
@@ -773,11 +736,9 @@ class _PostCardState extends State<PostCard> {
     ));
   }
 
-  // --- Show Bottom Sheets (_showCommentSheet, _showShareSheet) ---
   void _showCommentSheet(BuildContext context) {
-    // Ensure CommentBottomSheetContent is defined/imported
     if (_postId.isEmpty) return;
-    final String postMediaUrl = widget.postData['imageUrl'] ?? ''; // Pass empty string if null
+    final String postMediaUrl = widget.postData['imageUrl'] ?? '';
     final bool isPostOwner = widget.postData['uid'] == _currentUser?.uid;
 
     showModalBottomSheet(
@@ -785,17 +746,16 @@ class _PostCardState extends State<PostCard> {
       builder: (BuildContext sheetContext) {
         return FractionallySizedBox(
           heightFactor: 0.95,
-          child: CommentBottomSheetContent( // Assuming CommentBottomSheetContent handles null image URL
+          child: CommentBottomSheetContent(
             postId: _postId,
             postUserName: widget.postData['userName'] ?? 'Người dùng',
             currentCommentCount: _commentsCount,
-            postMediaUrl: postMediaUrl, // Pass potentially empty URL
+            postMediaUrl: postMediaUrl,
             postCaption: widget.postData['postCaption'] ?? '',
             isPostOwner: isPostOwner,
             onCommentPosted: (newCount) {
               if (mounted) {
                 setState(() { _commentsCount = newCount; });
-                // Optionally call widget.onStateChange() if FeedScreen needs immediate update
               }
             },
           ),
@@ -807,10 +767,10 @@ class _PostCardState extends State<PostCard> {
   void _showShareSheet(BuildContext context) {
     if (_postId.isEmpty) return;
     showModalBottomSheet(
-      context: context, // Sửa lỗi: Thêm context
+      context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (BuildContext sheetContext) { // Sửa lỗi: Thêm builder
+      builder: (BuildContext sheetContext) {
         return ShareSheetContent(
           postId: _postId,
           postUserName: widget.postData['userName'] ?? 'Người dùng',
@@ -823,12 +783,11 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
-  // --- Delete Post Logic (_deletePost) ---
   void _deletePost() async {
     if (widget.postData['uid'] != _currentUser?.uid || _postId.isEmpty) return;
     final confirm = await showDialog<bool>(
-      context: context, // Sửa lỗi: Thêm context
-      builder: (BuildContext dialogContext) { // Sửa lỗi: Thêm builder
+      context: context,
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: darkSurface,
           title: const Text('Xác nhận Xóa', style: TextStyle(color: Colors.white)),
@@ -848,21 +807,18 @@ class _PostCardState extends State<PostCard> {
     );
     if (confirm == true) {
       try {
-        // TODO: Delete image from Storage if applicable
         await _firestore.collection('posts').doc(_postId).delete();
-        // TODO: Delete subcollections (comments, etc.) via Cloud Function recommended
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.')));
-          widget.onStateChange(); // Notify parent to rebuild
+          widget.onStateChange();
         }
       } catch (e) { /* Handle error */ }
     }
   }
 
-  // --- Navigate to Profile (_navigateToProfile) ---
   void _navigateToProfile(String targetUsernameOrUid) {
-    final targetUid = widget.postData['uid']; // Prefer UID from post data
-    final fallbackId = (targetUsernameOrUid == (_currentUser?.displayName ?? 'You')) ? _currentUser?.uid : targetUsernameOrUid; // Fallback logic needs adjustment if username != UID
+    final targetUid = widget.postData['uid'];
+    final fallbackId = (targetUsernameOrUid == (_currentUser?.displayName ?? 'You')) ? _currentUser?.uid : targetUsernameOrUid;
     final profileId = targetUid ?? fallbackId;
 
     if (profileId == null || profileId.isEmpty) {
@@ -872,15 +828,18 @@ class _PostCardState extends State<PostCard> {
 
     Navigator.of(context).push(MaterialPageRoute(
       builder: (context) => ProfileScreen(
-        targetUserId: profileId == _currentUser?.uid ? null : profileId, // Pass null for own profile
-        onNavigateToHome: () => Navigator.pop(context),
-        onLogout: () {}, // Provide dummy logout
+        targetUserId: profileId == _currentUser?.uid ? null : profileId,
+        onNavigateToHome: () {
+          print("Navigate to home triggered from profile opened via post card");
+        },
+        onLogout: () {
+          print("Logout triggered from profile opened via post card - likely no-op");
+        },
       ),
     ));
   }
 
 
-  // --- More Options Button (_buildMoreOptionsButton) ---
   Widget _buildMoreOptionsButton(BuildContext context) {
     final bool isMyPost = widget.postData['uid'] == _currentUser?.uid;
     List<PopupMenuItem<String>> items = [
@@ -894,12 +853,12 @@ class _PostCardState extends State<PostCard> {
     }
 
     return PopupMenuButton<String>(
-      itemBuilder: (BuildContext context) => items, // SỬA LỖI: Thêm itemBuilder
+      itemBuilder: (BuildContext context) => items,
       onSelected: (String value) {
         if (value == 'delete') {
           _deletePost();
         }
-        // TODO: Handle other options (edit, report, hide, unfollow)
+        // TODO: Handle other options
       },
       icon: const Icon(Icons.more_horiz, color: sonicSilver),
       color: darkSurface,
@@ -908,22 +867,22 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
-  // --- Interaction Button Helper (_buildInteractionButton) ---
+
   Widget _buildInteractionButton({
-    required IconData icon, // SỬA LỖI: Thêm tham số
-    required Color color,    // SỬA LỖI: Thêm tham số
-    required int count,      // SỬA LỖI: Thêm tham số
-    required VoidCallback onTap, // SỬA LỖI: Thêm tham số
+    required IconData icon,
+    required Color color,
+    required int count,
+    required VoidCallback onTap,
   }) {
     return InkWell(
       onTap: onTap,
-      child: Row( // SỬA LỖI: Thêm child
+      child: Row(
         children: [
-          Icon(icon, color: color, size: 28), // ĐÃ SỬA: Tăng size
+          Icon(icon, color: color, size: 28),
           const SizedBox(width: 4),
           if (count > 0)
             Text(
-              count.toString(), // TODO: Format large numbers
+              count.toString(),
               style: const TextStyle(color: sonicSilver, fontSize: 13, fontWeight: FontWeight.w500),
             ),
         ],
@@ -931,37 +890,37 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
-// --- Build Method ---
   @override
   Widget build(BuildContext context) {
-    // Lấy dữ liệu từ state cục bộ
     final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
     final String? imageUrl = widget.postData['imageUrl'] as String?;
-    // ĐẢM BẢO HIỂN THỊ TÊN THẬT HOẶC CHUỖI MẶC ĐỊNH HỢP LÝ
     final String userName = widget.postData['userName'] as String? ?? 'Người dùng';
     final String locationTime = widget.postData['locationTime'] as String? ?? '';
     final String tag = widget.postData['tag'] as String? ?? '';
     final String caption = widget.postData['postCaption'] as String? ?? '';
 
-    // Xác định ImageProvider (có thể null)
     final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
         ? NetworkImage(imageUrl) : null;
     final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
         ? NetworkImage(avatarUrl) : null;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8.0),
-      padding: const EdgeInsets.only(bottom: 10),
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.only(bottom: 0),
+      // =======================================================
+      // THAY ĐỔI: Thêm màu nền đen cho PostCard để che đi khoảng trắng nếu có
+      // =======================================================
+      color: Colors.black, // Đặt nền đen cho card
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 1. Header
           Padding(
-            padding: const EdgeInsets.only(left: 16.0, bottom: 12.0, right: 16.0), // ĐÃ SỬA: Đồng bộ padding
+            padding: const EdgeInsets.only(left: 0.0, bottom: 12.0, right: 0.0, top: 10.0),
             child: Row(
               children: [
                 GestureDetector(
-                    onTap: () => _navigateToProfile(userName), // Pass username as fallback
+                    onTap: () => _navigateToProfile(userName),
                     child: CircleAvatar(
                       radius: 18, backgroundColor: darkSurface,
                       backgroundImage: avatarImageProvider,
@@ -991,7 +950,7 @@ class _PostCardState extends State<PostCard> {
           // 2. Caption
           if (caption.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(left: 16.0, bottom: 8.0, right: 16.0), // ĐÃ SỬA: Đồng bộ padding
+              padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
               child: Text(caption, style: const TextStyle(color: Colors.white, fontSize: 15)),
             ),
 
@@ -1002,7 +961,7 @@ class _PostCardState extends State<PostCard> {
             child: AspectRatio(
               aspectRatio: 1.0,
               child: Container(
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), color: darkSurface),
+                decoration: const BoxDecoration(borderRadius: BorderRadius.zero, color: darkSurface),
                 child: postImageProvider != null
                     ? Image(
                   image: postImageProvider, fit: BoxFit.cover,
@@ -1015,20 +974,20 @@ class _PostCardState extends State<PostCard> {
 
           // 4. Actions
           Padding(
-            padding: const EdgeInsets.only(top: 10.0, left: 16, right: 16), // ĐÃ SỬA: Đồng bộ padding
+            padding: const EdgeInsets.only(top: 10.0, left: 0.0, right: 0.0, bottom: 10.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     _buildInteractionButton(icon: _isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? coralRed : sonicSilver, count: _likesCount, onTap: _toggleLike),
-                    const SizedBox(width: 20), // ĐÃ SỬA: Tăng khoảng cách
+                    const SizedBox(width: 20),
                     _buildInteractionButton(icon: Icons.chat_bubble_outline_rounded, color: sonicSilver, count: _commentsCount, onTap: () => _showCommentSheet(context)),
-                    const SizedBox(width: 20), // ĐÃ SỬA: Tăng khoảng cách
+                    const SizedBox(width: 20),
                     _buildInteractionButton(icon: Icons.send_rounded, color: sonicSilver, count: _sharesCount, onTap: () => _showShareSheet(context)),
                     const Spacer(),
-                    IconButton( // Nút Bookmark
-                      icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 28), // ĐÃ SỬA: Tăng size
+                    IconButton(
+                      icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 28),
                       onPressed: _toggleSave,
                       padding: EdgeInsets.zero, constraints: const BoxConstraints(), splashRadius: 24,
                     ),
@@ -1037,8 +996,8 @@ class _PostCardState extends State<PostCard> {
                 if (_likesCount > 0) ... [
                   const SizedBox(height: 8),
                   Padding(
-                    padding: const EdgeInsets.only(left: 4.0), // Sửa lỗi: Thêm padding
-                    child: Text( // Sửa lỗi: Thêm child
+                    padding: const EdgeInsets.only(left: 4.0),
+                    child: Text(
                       '$_likesCount lượt thích',
                       style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
                     ),
