@@ -260,20 +260,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // --- Hàm helper để cập nhật user profile trên Firestore (Placeholder) ---
+  // Thay thế hàm trống bằng hàm này
   Future<void> _updateUserProfile(Map<String, dynamic> dataToUpdate) async {
-    print("TODO: Update profile with $dataToUpdate");
-    // Thường dùng: await _firestore.collection('users').doc(_profileUserId).update(dataToUpdate);
+    if (!_isMyProfile) return;
+    try {
+      await _firestore.collection('users').doc(_profileUserId).update(dataToUpdate);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã cập nhật thành công!')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e')));
+      }
+    }
   }
 
   // --- Hàm xử lý Follow/Unfollow (Placeholder) ---
+// --- Hàm xử lý Follow/Unfollow (ĐÃ HOÀN THIỆN) ---
   Future<void> _toggleFollow(bool amIFollowingTarget) async {
-    print("TODO: Follow/Unfollow action: ${amIFollowingTarget ? 'Unfollow' : 'Follow'}");
-  }
+    // 1. Kiểm tra điều kiện cần thiết
+    if (_currentUser == null || _isMyProfile) return;
 
+    final currentUserId = _currentUser!.uid;
+    final targetUserId = _profileUserId;
+
+    // 2. Sử dụng WriteBatch để đảm bảo cả hai cập nhật cùng thành công hoặc thất bại
+    final WriteBatch batch = _firestore.batch();
+    final myUserRef = _firestore.collection('users').doc(currentUserId);
+    final targetUserRef = _firestore.collection('users').doc(targetUserId);
+
+    try {
+      if (amIFollowingTarget) {
+        // --- LOGIC HỦY THEO DÕI ---
+        // Xóa người kia khỏi danh sách "following" của tôi
+        batch.update(myUserRef, {'following': FieldValue.arrayRemove([targetUserId])});
+        // Xóa tôi khỏi danh sách "followers" của người kia
+        batch.update(targetUserRef, {'followers': FieldValue.arrayRemove([currentUserId])});
+      } else {
+        // --- LOGIC THEO DÕI ---
+        // Thêm người kia vào danh sách "following" của tôi
+        batch.update(myUserRef, {'following': FieldValue.arrayUnion([targetUserId])});
+        // Thêm tôi vào danh sách "followers" của người kia
+        batch.update(targetUserRef, {'followers': FieldValue.arrayUnion([currentUserId])});
+
+        // Tạo một thông báo cho người được theo dõi
+        final notificationRef = targetUserRef.collection('notifications').doc();
+        batch.set(notificationRef, {
+          'type': 'follow',
+          'senderId': currentUserId,
+          'senderName': _currentUser!.displayName ?? 'Một người dùng',
+          'senderAvatarUrl': _currentUser!.photoURL ?? '',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+
+      // 3. Thực thi tất cả các lệnh trong batch
+      await batch.commit();
+
+    } catch (e) {
+      print("Lỗi khi thực hiện follow/unfollow: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã có lỗi xảy ra. Vui lòng thử lại.')),
+        );
+      }
+    }
+  }
   // --- Build Stats (ĐÃ SỬA: Bỏ Lượt thích, căn giữa Followers) ---
   Widget _buildStatsBlock(int posts, int followers, int following) {
     return Row(
-      // Sử dụng MainAxisAlignment.spaceEvenly để căn đều
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _buildStatItem(posts, 'Bài viết'),
@@ -345,7 +401,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (context) => MessageScreen(targetUserId: _profileUserId)));
+                    Navigator.push(context, MaterialPageRoute(builder: (context) => MessageScreen(targetUserId: _profileUserId, targetUserName: name)));
                   },
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: sonicSilver),
@@ -480,7 +536,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // Widget cho menu Profile của tôi
-  Widget _buildMyProfileMenu(BuildContext context) {
+  // Thay thế hàm cũ bằng hàm này
+  Widget _buildMyProfileMenu(BuildContext context, Map<String, dynamic> userData) { // Sửa: Thêm tham số userData
     return PopupMenuButton<String>(
       icon: const Icon(Icons.menu, color: Colors.white),
       color: darkSurface,
@@ -493,24 +550,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (value == 'logout') {
           widget.onLogout();
         } else if (value == 'edit') {
-          final currentSnapshot = (_userStream as Stream<DocumentSnapshot>).first;
-          currentSnapshot.then((snapshot) {
-            final data = snapshot.data() as Map<String, dynamic>? ?? {};
-            Navigator.push(context, MaterialPageRoute(builder: (context) => EditProfileScreen(
-              currentUserId: _profileUserId,
-              initialName: data['name'] ?? '',
-              initialBio: data['bio'] ?? data['title'] ?? '',
-              isAccountLocked: data['isPrivate'] ?? false,
-              onStateChange: () => setState(() {}),
-            )));
-          }).catchError((e) {
-            print("Lỗi khi lấy dữ liệu: $e");
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể tải dữ liệu để chỉnh sửa.'), backgroundColor: coralRed));
-          });
+          // Sửa: Dùng trực tiếp userData, không cần .first.then()
+          Navigator.push(context, MaterialPageRoute(builder: (context) => EditProfileScreen(
+            currentUserId: _profileUserId,
+            initialName: userData['name'] ?? '',
+            initialBio: userData['bio'] ?? userData['title'] ?? '',
+            isAccountLocked: userData['isPrivate'] ?? false,
+            onStateChange: () { if(mounted) setState(() {}); }, // Gọi setState để refresh
+          )));
         }
       },
     );
   }
+
 
   // Widget cho menu Profile của người khác
   Widget _buildOtherProfileMenu(BuildContext context) {
@@ -566,54 +618,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
 
   // --- Content Grid ---
-  Widget _buildContentGrid() {
-    if (_profileUserId.isEmpty) { return const Center(child: Padding( padding: EdgeInsets.all(40.0), child: Text('Không tìm thấy ID người dùng.', style: TextStyle(color: coralRed)) )); }
-    final currentUserId = _currentUser?.uid ?? '';
-    Query postsQuery;
-
-    postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true);
-    final tabIndex = _selectedTabIndex;
-    final isMyProfile = _isMyProfile;
-
-    if (isMyProfile) {
-      switch (tabIndex) {
-        case 0: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true); break;
-        case 1: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Chỉ mình tôi').orderBy('timestamp', descending: true); break;
-        case 2: postsQuery = _firestore.collection('posts').where('likedBy', arrayContains: currentUserId).orderBy('timestamp', descending: true); break;
-        case 3: postsQuery = _firestore.collection('posts').where('savedBy', arrayContains: currentUserId).orderBy('timestamp', descending: true); break;
-      }
-    } else {
-      switch (tabIndex) {
-        case 0: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true); break;
-        case 1: return const Center(child: Padding(padding: EdgeInsets.all(40.0), child: Text('Không thể xem bài viết đã thích của người khác.', style: TextStyle(color: sonicSilver))));
-        default: postsQuery = _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true);
-      }
-    }
-
+  // Xóa hàm _buildContentGrid() cũ và thay bằng hàm này
+  Widget _buildGridForStream(Stream<QuerySnapshot> stream, String emptyMessage) {
     return StreamBuilder<QuerySnapshot>(
-      stream: postsQuery.limit(21).snapshots(),
+      stream: stream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) { return const Center(child: Padding( padding: EdgeInsets.symmetric(vertical: 40.0), child: CircularProgressIndicator(color: topazColor) )); }
         if (snapshot.hasError) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text('Lỗi tải nội dung: ${snapshot.error}', style: const TextStyle(color: coralRed)) )); }
         final postDocs = snapshot.data?.docs ?? [];
-        if (postDocs.isEmpty) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text(_selectedTabIndex == 0 ? 'Chưa có bài viết nào được đăng.' : 'Không có nội dung cho tab này.', style: TextStyle(color: sonicSilver)) )); }
+        if (postDocs.isEmpty) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text(emptyMessage, style: const TextStyle(color: sonicSilver)) )); }
 
-        return GridView.builder(
-          padding: EdgeInsets.zero, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-          itemCount: postDocs.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount( crossAxisCount: 3, crossAxisSpacing: 1.0, mainAxisSpacing: 1.0, childAspectRatio: 1.0),
-          itemBuilder: (context, index) {
-            final doc = postDocs[index];
-            final postData = doc.data() as Map<String, dynamic>? ?? {};
-            final String? imageUrl = postData['imageUrl'] as String?;
-            final List<String> likedByList = List<String>.from(postData['likedBy'] ?? []);
-            final int likes = (postData['likesCount'] is num ? (postData['likesCount'] as num).toInt() : likedByList.length);
-            return _buildGridItem(doc.id, imageUrl, likes);
-          },
+        // Dùng SingleChildScrollView ở đây để nội dung có thể cuộn được
+        return SingleChildScrollView(
+          child: GridView.builder(
+            padding: EdgeInsets.zero, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+            itemCount: postDocs.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount( crossAxisCount: 3, crossAxisSpacing: 1.0, mainAxisSpacing: 1.0, childAspectRatio: 1.0),
+            itemBuilder: (context, index) {
+              final doc = postDocs[index];
+              final postData = doc.data() as Map<String, dynamic>? ?? {};
+              final String? imageUrl = postData['imageUrl'] as String?;
+              final List<String> likedByList = List<String>.from(postData['likedBy'] ?? []);
+              final int likes = (postData['likesCount'] is num ? (postData['likesCount'] as num).toInt() : likedByList.length);
+              return _buildGridItem(doc.id, imageUrl, likes);
+            },
+          ),
         );
       },
     );
   }
+
 
   // Widget cho một item trong Grid
   Widget _buildGridItem(String postId, String? imagePathOrUrl, int likes) {
@@ -668,8 +702,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: Row( mainAxisSize: MainAxisSize.min, children: [ Text(displayedName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), if (isAccountLocked) const Padding( padding: EdgeInsets.only(left: 6.0), child: Icon(Icons.lock, color: sonicSilver, size: 18), ), ], ),
             centerTitle: true,
             leading: _isMyProfile ? null : IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
-            actions: [ _isMyProfile ? _buildMyProfileMenu(context) : _buildOtherProfileMenu(context), ],
-          ),
+            actions: [ _isMyProfile ? _buildMyProfileMenu(context, userData) : _buildOtherProfileMenu(context) ],          ),
           body: Column(
             children: [
               // 1. HEADER INFO (Đã bỏ totalLikes)
@@ -682,7 +715,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // 2. TABS
               _buildGalleryTabs(),
               // 3. CONTENT GRID
-              Expanded( child: SingleChildScrollView( child: _buildContentGrid(), ), ),
+              // Thay thế đoạn code này:
+              // Expanded( child: SingleChildScrollView( child: _buildContentGrid(), ), ),
+
+              // Bằng đoạn code này:
+              Expanded(
+                child: IndexedStack(
+                  index: _selectedTabIndex,
+                  children: [
+                    // Tab 0: Bài viết công khai
+                    _buildGridForStream(
+                      _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true).limit(21).snapshots(),
+                      'Chưa có bài viết nào.',
+                    ),
+
+                    // Tab 1: Bài viết riêng tư (nếu là profile của tôi) hoặc Bài đã thích (nếu là của người khác)
+                    if (_isMyProfile)
+                      _buildGridForStream(
+                        _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Chỉ mình tôi').orderBy('timestamp', descending: true).limit(21).snapshots(),
+                        'Chưa có bài viết riêng tư nào.',
+                      )
+                    else
+                      _buildGridForStream(
+                        _firestore.collection('posts').where('likedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
+                        'Người dùng này chưa thích bài viết nào.',
+                      ),
+
+                    // Tab 2: Bài đã thích (nếu là của tôi)
+                    if (_isMyProfile)
+                      _buildGridForStream(
+                        _firestore.collection('posts').where('likedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
+                        'Bạn chưa thích bài viết nào.',
+                      ),
+
+                    // Tab 3: Bài đã lưu (nếu là của tôi)
+                    if (_isMyProfile)
+                      _buildGridForStream(
+                        _firestore.collection('posts').where('savedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
+                        'Bạn chưa lưu bài viết nào.',
+                      ),
+                  ],
+                ),
+              ),
+
             ],
           ),
         );
@@ -708,7 +783,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           // Avatar
           GestureDetector( onTap: () => _handleAvatarTap(context, avatarPathOrUrl), child: Hero( tag: heroTag, child: CircleAvatar( radius: 40, backgroundColor: darkSurface, backgroundImage: avatarImageProvider, child: avatarImageProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 40) : null, ), ), ),
           // Bio
-          if (bio.isNotEmpty) Padding( padding: const EdgeInsets.only(top: 10.0, bottom: 10.0), child: Text( bio, textAlign: TextAlign.center, style: TextStyle(color: sonicSilver, fontSize: 16) ), ),
           const SizedBox(height: 10),
           // Stats Block (ĐÃ CẬP NHẬT)
           _buildStatsBlock(
@@ -717,6 +791,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
               hideSensitiveStats ? 0 : followingCount
           ),
           const SizedBox(height: 20),
+          if (bio.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0), // Cân nhắc thêm padding cho cân đối
+              child: Text(
+                bio,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: sonicSilver, fontSize: 16),
+              ),
+            ),
           // Action Buttons
           _buildActionButtons( context, isAccountLocked, name, bio ),
           const SizedBox(height: 10),

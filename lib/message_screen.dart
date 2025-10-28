@@ -253,7 +253,7 @@ class _ChatListItem extends StatelessWidget {
         if (!userSnapshot.hasData) return const ListTile(title: Text('Đang tải...', style: TextStyle(color: sonicSilver)));
         
         final userData = userSnapshot.data!.data() as Map<String, dynamic>;
-        final String targetUserName = userData['fullName'] ?? 'Người dùng';
+        final String targetUserName = userData['name'] ?? 'Người dùng';
         final String targetAvatarUrl = userData['avatarUrl'] ?? ''; // Giả sử có trường avatarUrl
 
         return ListTile(

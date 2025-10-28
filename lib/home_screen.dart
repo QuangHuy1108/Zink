@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'session_manager.dart';
 import 'login_screen.dart';
+import 'add_post_screen.dart'; // <--- THÊM DÒNG NÀY
 
 // Import các màn hình con, ẩn đi các class trùng lặp/giả định
 // 1. FeedScreen: Định nghĩa chính thức FeedScreen
@@ -90,7 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onItemTapped(int index) {
     if (index == 2) {
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (context) => const CreatePostScreen()),
+        MaterialPageRoute(builder: (context) => AddPostScreen(onPostUploaded: () {})), // SỬA Ở ĐÂY: Bỏ `const`
       );
     } else {
       if (_selectedIndex != index) {

@@ -141,9 +141,104 @@ class _ReelItemState extends State<ReelItem> with SingleTickerProviderStateMixin
   void dispose() { _likeAnimController.dispose(); super.dispose(); }
 
   // --- Các hàm _toggleLike, _toggleSave, _toggleFollow, _showShareSheet, _showCommentSheet, _showMoreOptions, _navigateToUserProfile giữ nguyên logic Firestore ---
-  void _toggleLike() { /* ... */ }
-  void _toggleSave() { /* ... */ }
-  void _toggleFollow() { /* ... */ }
+  // Bên trong _ReelItemState
+  void _toggleLike() {
+    if (_currentUser == null) return;
+    final userId = _currentUser!.uid;
+
+    // 1. Cập nhật UI ngay lập tức để người dùng thấy phản hồi
+    setState(() {
+      _isLiked = !_isLiked;
+      if (_isLiked) {
+        _likesCount++;
+        _likeAnimController.forward(from: 0); // Kích hoạt animation
+      } else {
+        _likesCount--;
+      }
+    });
+
+    // 2. Cập nhật dữ liệu trên Firestore ở chế độ nền
+    final reelRef = _firestore.collection('reels').doc(_reelId);
+    final updateData = {
+      'likedBy': _isLiked ? FieldValue.arrayUnion([userId]) : FieldValue.arrayRemove([userId]),
+      'likesCount': FieldValue.increment(_isLiked ? 1 : -1),
+    };
+
+    reelRef.update(updateData).catchError((error) {
+      // Nếu có lỗi, rollback lại thay đổi trên UI để đảm bảo tính nhất quán
+      if (mounted) {
+        setState(() {
+          _isLiked = !_isLiked; // Đảo ngược lại
+          _isLiked ? _likesCount++ : _likesCount--;
+        });
+      }
+      print("Lỗi cập nhật like: $error");
+    });
+  }
+  void _toggleSave() {
+    if (_currentUser == null) return;
+    final userId = _currentUser!.uid;
+    // 1. Cập nhật UI ngay lập tức
+    setState(() {
+    _isSaved = !_isSaved;
+    });
+    // 2. Cập nhật dữ liệu trên Firestore
+    final reelRef = _firestore.collection('reels').doc(_reelId);
+    final updateData = {
+    'savedBy': _isSaved ? FieldValue.arrayUnion([userId]) : FieldValue.arrayRemove([userId]),
+    };
+    reelRef.update(updateData).catchError((error) {
+    // Nếu có lỗi, rollback lại thay đổi trên UI
+    if (mounted) {
+    setState(() {
+    _isSaved = !_isSaved; // Đảo ngược lại
+    });
+    }
+    print("Lỗi cập nhật save: $error");
+    });
+  }
+  // Bên trong _ReelItemState
+  void _toggleFollow() async {
+    if (_currentUser == null) return;
+    final currentUserId = _currentUser!.uid;
+    final targetUserId = _reelData['uid'];
+
+    if (currentUserId == targetUserId) return; // Không thể tự theo dõi chính mình
+
+    // 1. Cập nhật UI ngay lập tức
+    setState(() {
+      _isFollowingUser = !_isFollowingUser;
+    });
+
+    // 2. Chuẩn bị batch write để cập nhật cả hai tài liệu
+    final WriteBatch batch = _firestore.batch();
+    final myUserRef = _firestore.collection('users').doc(currentUserId);
+    final targetUserRef = _firestore.collection('users').doc(targetUserId);
+
+    if (_isFollowingUser) {
+      // Thêm target vào ds "following" của tôi
+      batch.update(myUserRef, {'following': FieldValue.arrayUnion([targetUserId])});
+      // Thêm tôi vào ds "followers" của target
+      batch.update(targetUserRef, {'followers': FieldValue.arrayUnion([currentUserId])});
+    } else {
+      // Xóa target khỏi ds "following" của tôi
+      batch.update(myUserRef, {'following': FieldValue.arrayRemove([targetUserId])});
+      // Xóa tôi khỏi ds "followers" của target
+      batch.update(targetUserRef, {'followers': FieldValue.arrayRemove([currentUserId])});
+    }
+
+    // 3. Thực thi batch
+    await batch.commit().catchError((error){
+      // Nếu có lỗi, rollback lại UI
+      if(mounted) {
+        setState(() {
+          _isFollowingUser = !_isFollowingUser;
+        });
+      }
+      print("Lỗi cập nhật follow: $error");
+    });
+  }
+
   void _showShareSheet(BuildContext context) { /* ... */ }
   void _showCommentSheet(BuildContext context) { /* ... */ }
   void _showMoreOptions(BuildContext context) { /* ... Placeholder ... */ }
