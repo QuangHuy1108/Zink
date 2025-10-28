@@ -5,8 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Import các màn hình và widget khác
-import 'profile_screen.dart' hide MessageScreen;
-import 'comment_screen.dart';
+import 'profile_screen.dart' hide PostCard, Comment, PlaceholderScreen, FeedScreen, FollowersScreen, MessageScreen;
+import 'comment_screen.dart' hide Comment;
 import 'share_sheet.dart';
 import 'search_screen.dart';
 import 'notification_screen.dart' hide Comment, StoryViewScreen, CommentBottomSheetContent, ProfileScreen;
@@ -227,6 +227,7 @@ class _FeedScreenState extends State<FeedScreen> {
   Stream<QuerySnapshot>? _storiesStream;
   Map<String, bool> _viewedStories = {};
 
+  final Set<String> _viewedUserIds = {};
   final double _headerContentHeight = 45.0; // Giữ nguyên chiều cao nhỏ
 
   @override
@@ -238,9 +239,9 @@ class _FeedScreenState extends State<FeedScreen> {
 
   void _loadActiveStories() {
     _storiesStream = _firestore
-        .collection('stories')
-        .where('expiresAt', isGreaterThan: Timestamp.now())
-        .orderBy('expiresAt')
+        .collection('users') // <-- SỬA Ở ĐÂY: Đọc từ collection `users`
+        .where('hasActiveStory', isEqualTo: true) // Tìm những người có story
+        .orderBy('lastStoryTimestamp', descending: true) // Ưu tiên story mới
         .limit(20)
         .snapshots();
   }
@@ -266,6 +267,39 @@ class _FeedScreenState extends State<FeedScreen> {
       ),
     ).then((_) => onClosed());
   }
+  // Đặt hàm này bên trong _FeedScreenState
+  void _navigateToStoryViewForUser(DocumentSnapshot userDoc) async {final String userId = userDoc.id;
+  final userData = userDoc.data() as Map<String, dynamic>? ?? {};
+  final String userName = userData['name'] ?? 'Người dùng';
+  final String? avatarUrl = userData['avatarUrl'] as String?;if (mounted) setState(() => _viewedUserIds.add(userId));
+
+  try {
+    final storiesSnapshot = await _firestore
+        .collection('stories')
+        .where('userId', isEqualTo: userId)
+        .where('expiresAt', isGreaterThan: Timestamp.now())
+        .orderBy('timestamp', descending: false)
+        .get();
+
+    final storyDocs = storiesSnapshot.docs;
+
+    if (storyDocs.isNotEmpty && mounted) {
+      Navigator.of(context).push(
+          PageRouteBuilder(
+              opaque: false,
+              pageBuilder: (context, _, __) => StoryViewScreen(
+                  userName: userName,
+                  avatarUrl: avatarUrl,
+                storyDocs: storyDocs, // Truyền toàn bộ story docs của user đó
+              ),
+          ),
+      ).then((_) => _forceRebuild());
+    }
+  } catch (e) {
+    print("Lỗi khi tải story của người dùng: $e");
+  }
+  }
+
 
   String _formatActivityTime(DateTime? lastActive, bool isOnline) { return ''; }
 
@@ -279,78 +313,31 @@ class _FeedScreenState extends State<FeedScreen> {
     print("Refresh Feed...");
   }
 
-  Widget _buildSmallStoryAvatar(BuildContext context, DocumentSnapshot storyDoc) {
-    final storyData = storyDoc.data() as Map<String, dynamic>? ?? {};
-    final String storyUserId = storyData['userId'] ?? '';
-    final String storyUserName = storyData['userName'] ?? 'Người dùng';
-    final String? storyUserAvatarUrl = storyData['userAvatarUrl'] as String?;
-    final String storyId = storyDoc.id;
+  Widget _buildUserStoryAvatar(BuildContext context, DocumentSnapshot userDoc) {
+    final userData = userDoc.data() as Map<String, dynamic>? ?? {};
+    final String userId = userDoc.id;
+    final String userName = userData['name'] ?? 'Người dùng';
+    final String? userAvatarUrl = userData['avatarUrl'] as String?;
+    final bool hasViewed = _viewedUserIds.contains(userId); // Sửa: dùng _viewedUserIds
 
-    final bool isCurrentUserStory = storyUserId == _currentUser?.uid;
-    final bool storyViewed = _viewedStories[storyId] ?? false;
-
-    final ImageProvider? avatarProvider = (storyUserAvatarUrl != null && storyUserAvatarUrl.isNotEmpty)
-        ? NetworkImage(storyUserAvatarUrl)
-        : null;
-
-    final BoxDecoration avatarBorder = (!storyViewed)
-        ? BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [topazColor.withOpacity(0.8), earthYellow.withOpacity(0.8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        )
-    )
-        : BoxDecoration( /* ... grey border ... */ );
+    final ImageProvider? avatarProvider = (userAvatarUrl != null && userAvatarUrl.isNotEmpty) ? NetworkImage(userAvatarUrl) : null;
+    final BoxDecoration avatarBorder = !hasViewed
+        ? BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [topazColor.withOpacity(0.8), earthYellow.withOpacity(0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight))
+        : BoxDecoration(shape: BoxShape.circle, border: Border.all(color: sonicSilver.withOpacity(0.5), width: 1.5));
 
     return GestureDetector(
-      onTap: () {
-        if (!isCurrentUserStory) {
-          setState(() { _viewedStories[storyId] = true; });
-        }
-        _navigateToStoryScreen(
-            StoryViewScreen(
-                userName: storyUserName,
-                avatarUrl: storyUserAvatarUrl,
-                storyDocs: [storyDoc]
-            ),
-            _forceRebuild
-        );
-      },
+      onTap: () => _navigateToStoryViewForUser(userDoc), // Sửa: Gọi hàm điều hướng mới
       child: Container(
         width: 70,
         margin: const EdgeInsets.only(right: 12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(2.5),
-              decoration: avatarBorder,
-              child: CircleAvatar(
-                radius: 30,
-                backgroundColor: darkSurface,
-                backgroundImage: avatarProvider,
-                child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 30) : null,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              isCurrentUserStory ? 'Tin của bạn' : storyUserName.split(' ').first,
-              style: TextStyle(
-                color: (!storyViewed) ? Colors.white : sonicSilver,
-                fontSize: 12,
-                fontWeight: (!storyViewed) ? FontWeight.w500 : FontWeight.normal,
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-          ],
-        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(padding: const EdgeInsets.all(2.5), decoration: avatarBorder, child: CircleAvatar(radius: 30, backgroundColor: darkSurface, backgroundImage: avatarProvider, child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 30) : null)),
+          const SizedBox(height: 5),
+          Text(userName.split(' ').first, style: TextStyle(color: !hasViewed ? Colors.white : sonicSilver, fontSize: 12, fontWeight: !hasViewed ? FontWeight.w500 : FontWeight.normal), overflow: TextOverflow.ellipsis, maxLines: 1),
+        ]),
       ),
     );
   }
-
   Widget _buildMyStoryCreatorAvatar(BuildContext context) {
     final String? currentUserAvatar = _currentUser?.photoURL;
     final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
@@ -606,16 +593,18 @@ class _FeedScreenState extends State<FeedScreen> {
                         children: [_buildMyStoryCreatorAvatar(context)],
                       );
                     }
-                    final currentUserId = _currentUser?.uid;
+                    final userDocs = snapshot.data!.docs;
+                    final currentUserDoc = userDocs.where((doc) => doc.id == _currentUser?.uid).toList();
+                    final otherUserDocs = userDocs.where((doc) => doc.id != _currentUser?.uid).toList();
                     return ListView(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
                       children: [
-                        _buildMyStoryCreatorAvatar(context),
-                        ...snapshot.data!.docs
-                            .where((doc) => (doc.data() as Map<String, dynamic>?)?['userId'] != currentUserId)
-                            .map((doc) => _buildSmallStoryAvatar(context, doc))
-                            .toList(),
+                        if (currentUserDoc.isNotEmpty)
+                          _buildUserStoryAvatar(context, currentUserDoc.first)
+                        else
+                          _buildMyStoryCreatorAvatar(context),
+                        ...otherUserDocs.map((doc) => _buildUserStoryAvatar(context, doc)).toList(),
                       ],
                     );
                   },
