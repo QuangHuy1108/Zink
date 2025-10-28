@@ -517,7 +517,6 @@ class _FeedScreenState extends State<FeedScreen> {
                 child: PostCard(
                   key: ValueKey(postData['id']),
                   postData: postData,
-                  onStateChange: _forceRebuild,
                 ),
               );
             },
@@ -654,9 +653,7 @@ class _FeedScreenState extends State<FeedScreen> {
 // =======================================================
 class PostCard extends StatefulWidget {
   final Map<String, dynamic> postData;
-  final VoidCallback onStateChange;
-  const PostCard({super.key, required this.postData, required this.onStateChange});
-
+  const PostCard({super.key, required this.postData}); // <- Sửa lại constructor
   @override
   State<PostCard> createState() => _PostCardState();
 }
@@ -682,20 +679,27 @@ class _PostCardState extends State<PostCard> {
   @override
   void didUpdateWidget(covariant PostCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.postData['id'] != oldWidget.postData['id'] || widget.postData['timestamp'] != oldWidget.postData['timestamp']) {
+    // Nếu dữ liệu được truyền vào thay đổi, hãy cập nhật lại state của PostCard
+    if (widget.postData != oldWidget.postData) {
+      // print("PostCard [${widget.postData['id']}] didUpdateWidget!"); // Dùng để debug
       _updateStateFromWidget();
     }
   }
 
   void _updateStateFromWidget() {
-    _postId = widget.postData['id'] as String? ?? '';
-    _isLiked = widget.postData['isLiked'] as bool? ?? false;
-    _isSaved = widget.postData['isSaved'] as bool? ?? false;
-    _likesCount = widget.postData['likes'] as int? ?? 0;
-    _commentsCount = widget.postData['comments'] as int? ?? 0;
-    _sharesCount = widget.postData['shares'] as int? ?? 0;
-  }
+    _postId = widget.postData['id'];
+    _likesCount = widget.postData['likesCount'] ?? 0;
+    _commentsCount = widget.postData['commentsCount'] ?? 0;
+    _sharesCount = widget.postData['sharesCount'] ?? 0;
 
+    // SỬA Ở ĐÂY: Đọc từ 'likedBy' thay vì 'likes'
+    final List<dynamic> likes = widget.postData['likedBy'] ?? [];
+    _isLiked = _currentUser != null ? likes.contains(_currentUser!.uid) : false;
+
+    // SỬA Ở ĐÂY: Đọc từ 'savedBy' thay vì 'saves'
+    final List<dynamic> saves = widget.postData['savedBy'] ?? [];
+    _isSaved = _currentUser != null ? saves.contains(_currentUser!.uid) : false;
+  }
   void _updateFirestoreLike() {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
@@ -711,8 +715,8 @@ class _PostCardState extends State<PostCard> {
     final userId = _currentUser!.uid;
     final postRef = _firestore.collection('posts').doc(_postId);
     final updateData = _isSaved
-        ? {'savedBy': FieldValue.arrayRemove([userId])}
-        : {'savedBy': FieldValue.arrayUnion([userId])};
+        ? {'savedBy': FieldValue.arrayUnion([userId])} // <-- Sửa lại: Nếu isSaved là true -> Union
+        : {'savedBy': FieldValue.arrayRemove([userId])}; // <-- Ngược lại -> Remove
     postRef.update(updateData).catchError((e) => print("Error updating save: $e"));
   }
 
@@ -810,7 +814,7 @@ class _PostCardState extends State<PostCard> {
         await _firestore.collection('posts').doc(_postId).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.')));
-          widget.onStateChange();
+          // DÒNG widget.onStateChange() ĐÃ ĐƯỢC XÓA HOÀN TOÀN
         }
       } catch (e) { /* Handle error */ }
     }
@@ -880,8 +884,8 @@ class _PostCardState extends State<PostCard> {
         children: [
           Icon(icon, color: color, size: 28),
           const SizedBox(width: 4),
-          if (count > 0)
-            Text(
+          if (count > 0) // <--- ĐÂY LÀ ĐIỀU KIỆN KIỂM TRA
+            Text( // <--- VÀ ĐÂY LÀ WIDGET HIỂN THỊ CON SỐ
               count.toString(),
               style: const TextStyle(color: sonicSilver, fontSize: 13, fontWeight: FontWeight.w500),
             ),

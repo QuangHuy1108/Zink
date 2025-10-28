@@ -136,6 +136,7 @@ class _SearchScreenState extends State<SearchScreen> {
     if (searchQuery.isEmpty) return;
 
     setState(() {
+      _currentQuery = searchQuery; // <-- THÊM DÒNG NÀY
       _isLoading = true;
       _hasSearched = true;
       _userSearchResults = [];
