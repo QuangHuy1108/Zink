@@ -224,6 +224,7 @@ class _FeedScreenState extends State<FeedScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? _currentUser;
+  late final Stream<QuerySnapshot>_userStoriesStream;
   Stream<QuerySnapshot>? _storiesStream;
   Map<String, bool> _viewedStories = {};
 
@@ -238,13 +239,14 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   void _loadActiveStories() {
-    _storiesStream = _firestore
-        .collection('users') // <-- SỬA Ở ĐÂY: Đọc từ collection `users`
-        .where('hasActiveStory', isEqualTo: true) // Tìm những người có story
-        .orderBy('lastStoryTimestamp', descending: true) // Ưu tiên story mới
+    _userStoriesStream = _firestore
+        .collection('users')
+        .where('hasActiveStory', isEqualTo: true)
+        .orderBy('lastStoryTimestamp', descending: true)
         .limit(20)
         .snapshots();
   }
+
 
 
   void _forceRebuild() { if (mounted) setState(() {}); }
@@ -268,29 +270,30 @@ class _FeedScreenState extends State<FeedScreen> {
     ).then((_) => onClosed());
   }
   // Đặt hàm này bên trong _FeedScreenState
-  void _navigateToStoryViewForUser(DocumentSnapshot userDoc) async {final String userId = userDoc.id;
-  final userData = userDoc.data() as Map<String, dynamic>? ?? {};
-  final String userName = userData['name'] ?? 'Người dùng';
-  final String? avatarUrl = userData['avatarUrl'] as String?;if (mounted) setState(() => _viewedUserIds.add(userId));
+  void _navigateToStoryViewForUser(DocumentSnapshot userDoc) async {
+    final String userId = userDoc.id;
+    final userData = userDoc.data() as Map<String, dynamic>? ?? {};
+    final String userName = userData['name'] ?? 'Người dùng';
+    final String? avatarUrl = userData['avatarUrl'] as String?;
 
-  try {
-    final storiesSnapshot = await _firestore
-        .collection('stories')
-        .where('userId', isEqualTo: userId)
-        .where('expiresAt', isGreaterThan: Timestamp.now())
-        .orderBy('timestamp', descending: false)
-        .get();
+    try {
+      final storiesSnapshot = await _firestore
+          .collection('stories')
+          .where('userId', isEqualTo: userId)
+          .where('expiresAt', isGreaterThan: Timestamp.now())
+          .orderBy('timestamp', descending: false)
+          .get();
 
-    final storyDocs = storiesSnapshot.docs;
+      final storyDocs = storiesSnapshot.docs;
 
-    if (storyDocs.isNotEmpty && mounted) {
-      Navigator.of(context).push(
+      if (storyDocs.isNotEmpty && mounted) {
+        Navigator.of(context).push(
           PageRouteBuilder(
               opaque: false,
               pageBuilder: (context, _, __) => StoryViewScreen(
                   userName: userName,
                   avatarUrl: avatarUrl,
-                storyDocs: storyDocs, // Truyền toàn bộ story docs của user đó
+                  storyDocs: storyDocs, // Truyền toàn bộ story docs của user đó
               ),
           ),
       ).then((_) => _forceRebuild());
@@ -449,6 +452,8 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   // Widget hiển thị danh sách bài viết (TRẢ VỀ SLIVERLIST)
+// XÓA HÀM _buildPostFeedSliver() CŨ CỦA BẠN VÀ THAY BẰNG HÀM NÀY
+
   Widget _buildPostFeedSliver() {
     final currentUserId = _currentUser?.uid ?? '';
     Query query = _firestore.collection('posts').orderBy('timestamp', descending: true);
@@ -464,6 +469,7 @@ class _FeedScreenState extends State<FeedScreen> {
         }
         if (snapshot.hasError) {
           print("Lỗi tải bài viết: ${snapshot.error}");
+          // SỬA: Bỏ const ở Center vì Text dùng biến
           return SliverFillRemaining(
             child: Center(child: Text('Lỗi tải bài viết: ${snapshot.error}', style: const TextStyle(color: coralRed))),
             hasScrollBody: false,
@@ -472,15 +478,18 @@ class _FeedScreenState extends State<FeedScreen> {
 
         final posts = snapshot.data?.docs ?? [];
         if (posts.isEmpty) {
-          return SliverFillRemaining(
-            child: const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver)))),
+          // SỬA: Bỏ const ở Center và thêm vào các widget con
+          return const SliverFillRemaining(
+            child: Center(
+                child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver))
+                )
+            ),
             hasScrollBody: false,
           );
         }
 
-        // =======================================================
-        // THAY ĐỔI: Sử dụng SliverList thay vì SliverList.separated
-        // =======================================================
         return SliverList(
           delegate: SliverChildBuilderDelegate(
                 (context, index) {
@@ -488,18 +497,13 @@ class _FeedScreenState extends State<FeedScreen> {
               Map<String, dynamic> postData = doc.data() as Map<String, dynamic>? ?? {};
               postData['id'] = doc.id;
 
-              postData['userAvatarUrl'] = postData['userAvatarUrl'];
-              postData['imageUrl'] = postData['imageUrl'];
+              postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp'] as Timestamp) : 'Vừa xong';
 
-              postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp']) : 'Vừa xong';
-
-              // Thêm khoảng cách dưới cho mỗi PostCard (ngoại trừ cái cuối cùng)
               return Padding(
                 padding: EdgeInsets.only(
                   left: 16.0,
                   right: 16.0,
-                  // Thêm padding bottom nếu không phải item cuối
-                  bottom: index < posts.length - 1 ? 8.0 : 0, // Ví dụ khoảng cách 8.0
+                  bottom: index < posts.length - 1 ? 8.0 : 0,
                 ),
                 child: PostCard(
                   key: ValueKey(postData['id']),
@@ -514,7 +518,6 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
-
   String _formatTimestampAgo(Timestamp timestamp) {
     final DateTime dateTime = timestamp.toDate();
     final difference = DateTime.now().difference(dateTime);
@@ -526,7 +529,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context)  {
     final double topPadding = MediaQuery.of(context).padding.top;
     final double appBarTotalHeight = topPadding + _headerContentHeight;
     final double collapsedAppBarHeight = (kToolbarHeight + topPadding < appBarTotalHeight) ? kToolbarHeight + topPadding : appBarTotalHeight;
@@ -578,20 +581,27 @@ class _FeedScreenState extends State<FeedScreen> {
               child: SizedBox(
                 height: 100,
                 child: StreamBuilder<QuerySnapshot>(
-                  stream: _storiesStream,
+                  stream: _userStoriesStream,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting && !_storiesStreamHasData(snapshot)) {
-                      return const SizedBox.shrink();
-                    }
+                    if (snapshot.connectionState == ConnectionState.waiting && (!snapshot.hasData || snapshot.data!.docs.isEmpty)) {
+                      return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver)));                    }
                     if (snapshot.hasError) {
-                      return const Center(child: Icon(Icons.error_outline, color: sonicSilver));
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: Text(
+                            'Lỗi tải story: ${snapshot.error}',
+                            style: const TextStyle(color: coralRed, fontSize: 12),
+                          ),
+                        ),
+                      );
+
                     }
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return ListView(
                         scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        children: [_buildMyStoryCreatorAvatar(context)],
-                      );
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          children: [_buildMyStoryCreatorAvatar(context)]);
                     }
                     final userDocs = snapshot.data!.docs;
                     final currentUserDoc = userDocs.where((doc) => doc.id == _currentUser?.uid).toList();
