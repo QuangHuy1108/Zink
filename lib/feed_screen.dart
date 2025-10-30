@@ -225,19 +225,21 @@ class _FeedScreenState extends State<FeedScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? _currentUser;
   late final Stream<QuerySnapshot>_userStoriesStream;
-  Stream<QuerySnapshot>? _storiesStream;
-  Map<String, bool> _viewedStories = {};
 
   final Set<String> _viewedUserIds = {};
   final double _headerContentHeight = 45.0; // Giữ nguyên chiều cao nhỏ
 
-  @override
+  @override // Giữ lại một @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _loadActiveStories();
+    _checkMyStoryStatus();
+    _userStoriesStream = _firestore        .collection('users')
+        .where('hasActiveStory', isEqualTo: true)
+        .orderBy('lastStoryTimestamp', descending: true)
+        .limit(20)
+        .snapshots();
   }
-
   void _loadActiveStories() {
     _userStoriesStream = _firestore
         .collection('users')
@@ -250,6 +252,38 @@ class _FeedScreenState extends State<FeedScreen> {
 
 
   void _forceRebuild() { if (mounted) setState(() {}); }
+  // BẠN HÃY THÊM TOÀN BỘ HÀM NÀY VÀO BÊN TRONG CLASS _FeedScreenState
+
+// Hàm mới để kiểm tra và dọn dẹp cờ hasActiveStory
+  Future<void> _checkMyStoryStatus() async {
+    if (_currentUser == null) return;
+
+    final userDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
+    final userData = userDoc.data();
+
+    // Chỉ kiểm tra nếu userDoc tồn tại và cờ đang là true
+    if (userData != null && (userData['hasActiveStory'] as bool? ?? false)) {
+      // Lấy story mới nhất của người dùng
+      final lastStoryQuery = await _firestore.collection('stories')
+          .where('userId', isEqualTo: _currentUser!.uid)
+          .orderBy('timestamp', descending: true)
+          .limit(1)
+          .get();
+
+      if (lastStoryQuery.docs.isEmpty) {
+        // Nếu không có story nào nhưng cờ vẫn là true -> tắt cờ
+        await userDoc.reference.update({'hasActiveStory': false});
+      } else {
+        // Nếu có story, kiểm tra xem nó đã hết hạn chưa
+        final lastStory = lastStoryQuery.docs.first.data();
+        final expiresAt = lastStory['expiresAt'] as Timestamp?;
+        if (expiresAt != null && expiresAt.toDate().isBefore(DateTime.now())) {
+          // Story cuối cùng đã hết hạn -> tắt cờ
+          await userDoc.reference.update({'hasActiveStory': false});
+        }
+      }
+    }
+  }
 
   void _navigateToStoryScreen(Widget screen, VoidCallback onClosed) {
     Navigator.of(context).push(
@@ -275,6 +309,9 @@ class _FeedScreenState extends State<FeedScreen> {
     final userData = userDoc.data() as Map<String, dynamic>? ?? {};
     final String userName = userData['name'] ?? 'Người dùng';
     final String? avatarUrl = userData['avatarUrl'] as String?;
+
+    // THÊM DÒNG NÀY ĐỂ CẬP NHẬT TRẠNG THÁI "ĐÃ XEM"
+    if (mounted) setState(() => _viewedUserIds.add(userId));
 
     try {
       final storiesSnapshot = await _firestore
@@ -307,13 +344,13 @@ class _FeedScreenState extends State<FeedScreen> {
   String _formatActivityTime(DateTime? lastActive, bool isOnline) { return ''; }
 
   Future<void> _handleRefresh() async {
-    setState(() {
-      _viewedStories.clear();
-    });
-    _loadActiveStories();
-    setState(() {});
-    await Future.delayed(const Duration(milliseconds: 500));
-    print("Refresh Feed...");
+    await _checkMyStoryStatus();
+    if (mounted) {
+      setState(() {
+        _viewedUserIds.clear(); // <-- SỬA LẠI THÀNH BIẾN NÀY
+      });
+    }
+    await Future.delayed(const Duration(milliseconds: 200));
   }
 
   Widget _buildUserStoryAvatar(BuildContext context, DocumentSnapshot userDoc) {
@@ -581,39 +618,34 @@ class _FeedScreenState extends State<FeedScreen> {
               child: SizedBox(
                 height: 100,
                 child: StreamBuilder<QuerySnapshot>(
-                  stream: _userStoriesStream,
+                  stream: _userStoriesStream, // <-- SỬA: Dùng stream mới
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting && (!snapshot.hasData || snapshot.data!.docs.isEmpty)) {
-                      return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver)));                    }
+                      return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver)));
+                    }
                     if (snapshot.hasError) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          child: Text(
-                            'Lỗi tải story: ${snapshot.error}',
-                            style: const TextStyle(color: coralRed, fontSize: 12),
-                          ),
-                        ),
-                      );
-
+                      return Center(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16.0), child: Text('Lỗi tải story: ${snapshot.error}', style: const TextStyle(color: coralRed, fontSize: 12))));
                     }
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                      return ListView(
-                        scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          children: [_buildMyStoryCreatorAvatar(context)]);
+                      return ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16.0), children: [_buildMyStoryCreatorAvatar(context)]);
                     }
+
+                    // SỬA: Logic mới để xử lý danh sách người dùng
                     final userDocs = snapshot.data!.docs;
-                    final currentUserDoc = userDocs.where((doc) => doc.id == _currentUser?.uid).toList();
+                    final currentUserDocs = userDocs.where((doc) => doc.id == _currentUser?.uid).toList();
                     final otherUserDocs = userDocs.where((doc) => doc.id != _currentUser?.uid).toList();
+
                     return ListView(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
                       children: [
-                        if (currentUserDoc.isNotEmpty)
-                          _buildUserStoryAvatar(context, currentUserDoc.first)
+                        // Nếu tôi có story, hiển thị avatar story của tôi trước
+                        if (currentUserDocs.isNotEmpty)
+                          _buildUserStoryAvatar(context, currentUserDocs.first)
                         else
                           _buildMyStoryCreatorAvatar(context),
+
+                        // Sau đó là story của những người khác
                         ...otherUserDocs.map((doc) => _buildUserStoryAvatar(context, doc)).toList(),
                       ],
                     );
@@ -621,6 +653,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 ),
               ),
             ),
+
 
             // Suggested Friends
             SliverToBoxAdapter(
