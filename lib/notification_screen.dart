@@ -157,16 +157,30 @@ class SocialNotificationTile extends StatelessWidget {
 
 
   @override
+  @override
   Widget build(BuildContext context) {
     final data = notificationDoc.data() as Map<String, dynamic>? ?? {};
     final String type = data['type'] as String? ?? '';
     final String senderName = data['senderName'] as String? ?? 'Ai đó';
-    final String contentPreview = data['contentPreview'] as String? ?? '...';
     final Timestamp timestamp = data['timestamp'] ?? Timestamp.now();
     final bool isRead = data['isRead'] as bool? ?? false;
     final bool showIconOnAvatar = type != 'friend_request' && type != 'follow';
 
     final ImageProvider? avatarProvider = _getAvatarProvider(data);
+
+    // SỬA Ở ĐÂY: Tạo văn bản thông báo theo loại
+    String actionText;
+    switch (type) {
+      case 'follow':
+        actionText = 'đã bắt đầu theo dõi bạn.';
+        break;
+      case 'friend_request':
+        actionText = 'đã gửi cho bạn lời mời kết bạn.';
+        break;
+      default:
+        actionText = data['contentPreview'] as String? ?? '...';
+        break;
+    }
 
     void handleListTileTap() {
       if (type != 'friend_request' && type != 'follow') {
@@ -206,7 +220,6 @@ class SocialNotificationTile extends StatelessWidget {
       );
     }
 
-
     return GestureDetector(
       onLongPress: () => onLongPress(notificationDoc),
       child: Container(
@@ -219,7 +232,7 @@ class SocialNotificationTile extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 15),
               children: <TextSpan>[
                 TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                TextSpan(text: ' $contentPreview'),
+                TextSpan(text: ' $actionText'), // Dùng actionText đã tạo
               ],
             ),
           ),
@@ -230,7 +243,6 @@ class SocialNotificationTile extends StatelessWidget {
       ),
     );
   }
-
 }
 
 // =======================================================
@@ -295,10 +307,39 @@ class _NotificationScreenState extends State<NotificationScreen> {
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    // _markNotificationsAsRead(); // Logic đánh dấu đã đọc khi mở màn hình
+    // SỬA: Bỏ comment để kích hoạt chức năng
+    _markNotificationsAsRead();
   }
 
-  void _markNotificationsAsRead() async { /* ... */ }
+  // SỬA: Thêm nội dung cho hàm này
+  void _markNotificationsAsRead() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    // 1. Lấy tất cả các thông báo chưa đọc
+    final querySnapshot = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('notifications')
+        .where('isRead', isEqualTo: false)
+        .get();
+
+    if (querySnapshot.docs.isEmpty) return; // Không có gì để cập nhật
+
+    // 2. Sử dụng WriteBatch để cập nhật tất cả chúng trong một lần cho hiệu quả
+    final batch = _firestore.batch();
+    for (final doc in querySnapshot.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+
+    // 3. Thực thi batch
+    try {
+      await batch.commit();
+      print("Đã đánh dấu ${querySnapshot.docs.length} thông báo là đã đọc.");
+    } catch (e) {
+      print("Lỗi khi đánh dấu hàng loạt là đã đọc: $e");
+    }
+  }
 
   void _markSingleNotificationAsRead(DocumentSnapshot notifDoc) async {
     try {
@@ -309,14 +350,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   // LOGIC: Xử lý Chấp nhận hoặc Từ chối Yêu cầu Kết bạn (hoàn thiện)
+  // LOGIC: Xử lý Chấp nhận hoặc Từ chối Yêu cầu Kết bạn (ĐÃ SỬA)
   void _handleSocialAction(DocumentSnapshot notifDoc, String action) async {
-    final recipientId = _currentUser?.uid;
+    // SỬA: Lấy người dùng mới nhất
+    final currentUser = _auth.currentUser;
+    final recipientId = currentUser?.uid;
+
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
     final senderId = data['senderId'] as String?;
     final senderName = data['senderName'] as String? ?? 'Người dùng';
     final type = data['type'] as String?;
 
-    // Đảm bảo không xử lý lại yêu cầu đã xử lý
     if (recipientId == null || senderId == null || type != 'friend_request' || (data['actionTaken'] as bool? ?? false)) {
       return;
     }
@@ -326,28 +370,27 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderRef = _firestore.collection('users').doc(senderId);
     final notifRef = notifDoc.reference;
 
-    // 1. Cập nhật trạng thái thông báo (đã hành động)
     batch.update(notifRef, {'actionTaken': true});
 
     String message;
 
     if (action == 'accept') {
-      // 2. Thêm vào mảng friendUids của cả hai bên
+      final recipientDoc = await recipientRef.get();
+      final recipientData = recipientDoc.data() as Map<String, dynamic>?;
+      final recipientName = recipientData?['displayName'] ?? 'Người dùng';
+      final recipientAvatarUrl = recipientData?['photoURL'];
+
       batch.update(recipientRef, {'friendUids': FieldValue.arrayUnion([senderId])});
       batch.update(senderRef, {'friendUids': FieldValue.arrayUnion([recipientId])});
-
-      // 3. Xóa ID khỏi outgoingRequests của người gửi
       batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
 
-      // 4. Tạo thông báo cho người gửi (đã chấp nhận)
-      final recipientName = _currentUser?.displayName ?? 'Người dùng';
       batch.set(
           _firestore.collection('users').doc(senderId).collection('notifications').doc(),
           {
             'type': 'friend_accept',
             'senderId': recipientId,
             'senderName': recipientName,
-            'senderAvatarUrl': _currentUser?.photoURL,
+            'senderAvatarUrl': recipientAvatarUrl,
             'destinationId': recipientId,
             'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
             'timestamp': FieldValue.serverTimestamp(),
@@ -357,13 +400,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
       message = 'Đã chấp nhận lời mời kết bạn từ $senderName.';
 
     } else if (action == 'reject') {
-      // 2. Xóa ID khỏi outgoingRequests của người gửi
       batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
-
-      // 3. Xóa thông báo khỏi danh sách người nhận
       batch.delete(notifRef);
       message = 'Đã từ chối lời mời kết bạn từ $senderName.';
-
     } else {
       return;
     }
@@ -380,9 +419,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       print("Lỗi xử lý yêu cầu kết bạn: $e");
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Xử lý yêu cầu không thành công.'), backgroundColor: coralRed));
     }
-  }
-
-  void _handleProfileTap(DocumentSnapshot notifDoc) { /* ... */ }
+  }  void _handleProfileTap(DocumentSnapshot notifDoc) { /* ... */ }
 
   void _handleTap(DocumentSnapshot notifDoc) async {
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
@@ -437,8 +474,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
 
   @override
+  @override
+  @override
   Widget build(BuildContext context) {
-    final currentUserId = _currentUser?.uid;
+    final currentUser = _auth.currentUser;
+    final currentUserId = currentUser?.uid;
 
     if (currentUserId == null) {
       return const Scaffold(
@@ -450,14 +490,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        // THỐNG NHẤT NÚT BACK
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
           onPressed: () => Navigator.of(context).pop(),
           splashRadius: 28,
         ),
         title: const Text('Thông báo', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 20)),
-        backgroundColor: Colors.black, elevation: 0.5, shadowColor: darkSurface,
+        backgroundColor: Colors.black,
+        elevation: 0.5,
+        shadowColor: darkSurface,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: StreamBuilder<QuerySnapshot>(
@@ -483,7 +524,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final data = notifDoc.data() as Map<String, dynamic>? ?? {};
               final type = data['type'] as String? ?? '';
 
-              if (type == 'friend_request' || type == 'follow') {
+              if (type == 'friend_request') {
                 return SocialNotificationTile(
                   notificationDoc: notifDoc,
                   onUserTap: _handleProfileTap,
@@ -492,10 +533,37 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   onTileTap: _handleTap,
                 );
               } else {
+                // Xử lý tất cả các loại thông báo khác ở đây
                 final String senderName = data['senderName'] ?? 'Ai đó';
                 final Timestamp timestamp = data['timestamp'] ?? Timestamp.now();
                 final bool isRead = data['isRead'] ?? false;
                 final ImageProvider? avatarProvider = _getAvatarProvider(data);
+
+                // TẠO VĂN BẢN THÔNG BÁO THEO LOẠI
+                String actionText;
+                switch (type) {
+                  case 'like':
+                    actionText = 'đã thích bài viết của bạn.';
+                    break;
+                  case 'comment':
+                    final commentPreview = data['contentPreview'] as String? ?? '';
+                    actionText = 'đã bình luận: "${commentPreview.length > 50 ? '${commentPreview.substring(0, 50)}...' : commentPreview}"';
+                    break;
+                  case 'friend_accept':
+                    actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
+                    break;
+                  case 'share': // THÊM MỚI
+                    actionText = 'đã chia sẻ bài viết của bạn.';
+                    break;
+                  case 'save': // THÊM MỚI
+                    actionText = 'đã lưu bài viết của bạn.';
+                    break;
+                  case 'follow':
+                    actionText = 'đã bắt đầu theo dõi bạn.';
+                    break;
+                  default:
+                    actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
+                }
 
                 return GestureDetector(
                   onLongPress: () => _showNotificationMenu(notifDoc),
@@ -504,7 +572,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     child: ListTile(
                       onTap: () => _handleTap(notifDoc),
                       leading: CircleAvatar(
-                        radius: 24, backgroundColor: darkSurface, backgroundImage: avatarProvider,
+                        radius: 24,
+                        backgroundColor: darkSurface,
+                        backgroundImage: avatarProvider,
                         child: avatarProvider == null ? const Icon(Icons.person_outline, color: sonicSilver) : null,
                       ),
                       title: RichText(
@@ -512,14 +582,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
                           style: const TextStyle(color: Colors.white, fontSize: 15),
                           children: <TextSpan>[
                             TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            TextSpan(text: ' ${data['contentPreview'] ?? ''}'),
+                            TextSpan(text: ' $actionText'),
                           ],
                         ),
                       ),
                       subtitle: Text(_formatTimestampAgo(timestamp), style: TextStyle(color: sonicSilver, fontSize: 12)),
                       trailing: const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-
                     ),
                   ),
                 );

@@ -9,8 +9,50 @@ import 'package:firebase_auth/firebase_auth.dart'; // <--- Import Auth
 
 // --- Giả định các lớp/widget này tồn tại ---
 class PostCard extends StatelessWidget { final Map<String, dynamic> postData; final VoidCallback onStateChange; const PostCard({super.key, required this.postData, required this.onStateChange}); @override Widget build(BuildContext context) => Container(padding: const EdgeInsets.all(8), margin: const EdgeInsets.symmetric(vertical: 4), color: darkSurface, child: Text("Post ${postData['id']}", style: const TextStyle(color: Colors.white))); }
-class Comment { final String id; final String userId; final String userName; final String? userAvatarUrl; final String text; final Timestamp timestamp; final String? parentId; bool isLiked; int likesCount; final List<String> likedBy; Comment({required this.id, required this.userId, required this.userName, this.userAvatarUrl, required this.text, required this.timestamp, this.parentId, this.isLiked = false, required this.likesCount, required this.likedBy}); factory Comment.fromFirestore(DocumentSnapshot doc, String currentUserId) => Comment(id: doc.id, userId: '', userName: '', text: '', timestamp: Timestamp.now(), likesCount: 0, likedBy: []);}
-// --- Kết thúc giả định ---
+// THAY THẾ TOÀN BỘ CLASS COMMENT CŨ BẰNG CLASS NÀY:
+
+class Comment {
+  final String id;
+  final String userId;
+  final String displayName; // ĐÃ SỬA
+  final String? userAvatarUrl;
+  final String text;
+  final Timestamp timestamp;
+  final String? parentId;
+  bool isLiked;
+  int likesCount;
+  final List<String> likedBy;
+
+  Comment({
+    required this.id,
+    required this.userId,
+    required this.displayName, // ĐÃ SỬA
+    this.userAvatarUrl,
+    required this.text,
+    required this.timestamp,
+    this.parentId,
+    this.isLiked = false,
+    required this.likesCount,
+    required this.likedBy
+  });
+
+  factory Comment.fromFirestore(DocumentSnapshot doc, String currentUserId) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>? ?? {};
+    List<String> likedByList = List<String>.from(data['likedBy'] ?? []);
+    return Comment(
+      id: doc.id,
+      userId: data['userId'] ?? '',
+      displayName: data['displayName'] ?? 'Người dùng Zink', // ĐÃ SỬA
+      userAvatarUrl: data['userAvatarUrl'],
+      text: data['text'] ?? '',
+      timestamp: data['timestamp'] ?? Timestamp.now(),
+      parentId: data['parentId'],
+      likesCount: (data['likesCount'] is num ? (data['likesCount'] as num).toInt() : 0),
+      likedBy: likedByList,
+      isLiked: currentUserId.isNotEmpty && likedByList.contains(currentUserId),
+    );
+  }
+}// --- Kết thúc giả định ---
 
 // Constants
 const Color topazColor = Color(0xFFF6C886);
@@ -78,7 +120,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final String postUserName = widget.postData['userName'] ?? 'Bài viết';
+    final String postUserName = widget.postData['displayName'] ?? 'Bài viết';
 
     return Scaffold(
       backgroundColor: Colors.black,

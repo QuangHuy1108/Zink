@@ -17,7 +17,7 @@ const Color coralRed = Color(0xFFFD402C);
 // WIDGET CHUNG: Reel Header (Cập nhật Avatar)
 // =======================================================
 Widget _buildReelHeader(BuildContext context, Map<String, dynamic> reelData, bool isFollowing, VoidCallback onFollowTap, VoidCallback onAvatarTap) {
-  final String userName = reelData['userName'] ?? 'Người dùng';
+  final String userName = reelData['displayName'] ?? 'Người dùng'; // SỬA Ở ĐÂY
   final String? avatarUrl = reelData['userAvatarUrl'] as String?;
   final bool canFollow = reelData['uid'] != FirebaseAuth.instance.currentUser?.uid;
 
@@ -247,7 +247,7 @@ class _ReelItemState extends State<ReelItem> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) {
-    final String userName = _reelData['userName'] ?? 'Người dùng';
+    final String userName = _reelData['displayName'] ?? 'Người dùng'; // SỬA Ở ĐÂY
     final String description = _reelData['desc'] ?? '';
     final String? imageUrl = _reelData['imageUrl'] as String?;
 

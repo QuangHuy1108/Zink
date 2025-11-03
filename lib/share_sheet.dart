@@ -114,38 +114,81 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
   // ----------------------------------------------------
   // --- PHẦN 1: CHIA SẺ LÊN TRANG CÁ NHÂN (Hoàn thiện) ---
   // ----------------------------------------------------
+  // --- (SỬA) CHIA SẺ LÊN TRANG CÁ NHÂN VÀ GỬI THÔNG BÁO ---
   void _shareToProfile() async {
     final thoughts = _thoughtsController.text.trim();
     final user = _currentUser;
     if (user == null) return;
 
-    // 1. Tăng share count trên bài post gốc
-    await _incrementShares();
+    // Bắt đầu một batch write để thực hiện nhiều tác vụ
+    final WriteBatch batch = _firestore.batch();
+    final postRef = _firestore.collection('posts').doc(widget.postId);
 
-    // 2. Tạo một bài post mới cho việc chia sẻ (Reposta)
-    final userName = user.displayName ?? user.email?.split('@').first ?? 'Người dùng Zink';
+    try {
+      // 1. Lấy dữ liệu người dùng hiện tại và bài viết gốc
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      final originalPostDoc = await postRef.get();
 
-    final newPostData = {
-      'uid': user.uid,
-      'userName': userName,
-      'userAvatarUrl': user.photoURL,
-      'postCaption': thoughts.isNotEmpty ? 'Đã chia sẻ: $thoughts' : 'Đã chia sẻ bài viết của ${widget.postUserName}.',
-      'sharedPostId': widget.postId, // ID bài viết gốc
-      'imageUrl': null, // Không có ảnh riêng, chỉ là repost
-      'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
-      'likedBy': [], 'savedBy': [], 'privacy': 'Công khai',
-      'timestamp': FieldValue.serverTimestamp(),
-    };
+      if (!userDoc.exists || !originalPostDoc.exists) {
+        print("Lỗi: Không tìm thấy người dùng hoặc bài viết gốc.");
+        return;
+      }
 
-    await _firestore.collection('posts').add(newPostData);
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final originalPostData = originalPostDoc.data() as Map<String, dynamic>;
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã chia sẻ lên Trang cá nhân!'), backgroundColor: topazColor));
-      Navigator.pop(context);
+      final displayName = userData['displayName'] ?? 'Người dùng Zink';
+      final photoURL = userData['photoURL'];
+      final postOwnerId = originalPostData['uid'] as String?;
+
+      // 2. Cập nhật lượt chia sẻ trên bài viết gốc
+      batch.update(postRef, {'sharesCount': FieldValue.increment(1)});
+
+      // 3. Tạo một bài đăng "chia sẻ" mới
+      final newPostRef = _firestore.collection('posts').doc();
+      batch.set(newPostRef, {
+        'uid': user.uid,
+        'displayName': displayName,
+        'userAvatarUrl': photoURL,
+        'postCaption': thoughts.isNotEmpty ? 'Đã chia sẻ: $thoughts' : 'Đã chia sẻ bài viết của ${widget.postUserName}.',
+        'sharedPostId': widget.postId,
+        'imageUrl': null,
+        'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
+        'likedBy': [], 'savedBy': [], 'privacy': 'Công khai',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      // 4. Tạo thông báo cho chủ bài viết (nếu người chia sẻ không phải là chủ)
+      if (postOwnerId != null && postOwnerId != user.uid) {
+        final notificationRef = _firestore.collection('users').doc(postOwnerId).collection('notifications').doc();
+        batch.set(notificationRef, {
+          'type': 'share',
+          'senderId': user.uid,
+          'senderName': displayName,
+          'senderAvatarUrl': photoURL,
+          'destinationId': widget.postId, // ID của bài viết được chia sẻ
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+
+      // 5. Thực thi tất cả các lệnh
+      await batch.commit();
+
+      if (mounted) {
+        // Cập nhật UI ở màn hình trước
+        setState(() { _sharesCount++; });
+        widget.onSharesUpdated(_sharesCount);
+
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã chia sẻ lên Trang cá nhân!'), backgroundColor: topazColor));
+        Navigator.pop(context);
+      }
+
+    } catch (e) {
+      print("Lỗi khi chia sẻ bài viết: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi khi chia sẻ bài viết.'), backgroundColor: coralRed));
     }
-  }
-
-  Widget _buildShareToProfileSection() {
+  }  Widget _buildShareToProfileSection() {
     // Lấy avatar user hiện tại (URL hoặc null)
     final String? currentUserAvatarUrl = _currentUser?.photoURL;
     final ImageProvider? avatarProvider = (currentUserAvatarUrl != null && currentUserAvatarUrl.isNotEmpty)
@@ -215,18 +258,22 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
   // --------------------------------------------------
   void _sendMessageToFriends() async {
     final message = _friendMessageController.text.trim();
-    if (_selectedFriendUids.isEmpty) return;
+    if (_selectedFriendUids.isEmpty || _currentUser == null) return;
 
     // 1. Tăng share count trên bài post gốc
     await _incrementShares();
 
-    // 2. Gửi tin nhắn (Placeholder cho logic chat)
-    final recipientCount = _selectedFriendUids.length;
-    final user = _currentUser;
-    final senderName = user?.displayName ?? user?.email?.split('@').first ?? 'Bạn';
+    // 2. Lấy dữ liệu người gửi (là bạn) từ Firestore
+    DocumentSnapshot userDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
+    String senderName = 'Bạn';
+    if(userDoc.exists) {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      senderName = userData['displayName'] ?? 'Bạn';
+    }
 
-    // Logic: Gửi tin nhắn chứa liên kết bài post (Mock: In ra console)
-    print("Gửi bài viết ${widget.postId} tới $recipientCount bạn bè.");
+    // 3. Gửi tin nhắn (Placeholder cho logic chat)
+    final recipientCount = _selectedFriendUids.length;
+    print("Gửi bài viết ${widget.postId} tới $recipientCount bạn bè bởi $senderName.");
     print("Tin nhắn kèm theo: $message");
 
     // TODO: Triển khai logic tạo đoạn chat/tin nhắn thực tế cho từng người dùng.
@@ -239,7 +286,6 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       Navigator.pop(context);
     }
   }
-
   Widget _buildShareToFriendsSection() {
     final bool hasFriendsSelected = _selectedFriendUids.isNotEmpty;
 
@@ -274,8 +320,9 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
                   final doc = friendDocs[index];
                   final friendData = doc.data() as Map<String, dynamic>;
                   final friendUid = doc.id;
-                  final friendName = friendData['name'] ?? 'Bạn bè';
-                  final avatarUrl = friendData['avatarUrl'] as String?;
+                  // SỬA THÀNH ĐOẠN NÀY:
+                  final friendName = friendData['displayName'] ?? 'Bạn bè';
+                  final avatarUrl = friendData['photoURL'] as String?;
                   final isSelected = _selectedFriendUids.contains(friendUid);
 
                   final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))

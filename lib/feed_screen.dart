@@ -80,9 +80,7 @@ class AnimatedNotificationBell extends StatefulWidget {
   State<AnimatedNotificationBell> createState() => _AnimatedNotificationBellState();
 }
 
-class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> {
   bool _hasNotification = false;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -92,9 +90,6 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(duration: const Duration(milliseconds: 500), vsync: this);
-    _animation = Tween(begin: 0.0, end: 5.0).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticOut));
-
     _listenForNotifications();
   }
 
@@ -115,66 +110,49 @@ class _AnimatedNotificationBellState extends State<AnimatedNotificationBell> wit
           setState(() {
             _hasNotification = hasUnread;
           });
-          if (_hasNotification) {
-            _controller.repeat(reverse: true);
-          } else {
-            _controller.stop();
-            _controller.reset();
-          }
         }
       }, onError: (error) {
         print("Error listening for notifications: $error");
         if (mounted) {
           setState(() { _hasNotification = false; });
-          _controller.stop();
-          _controller.reset();
         }
       });
-    } else {
-      if (mounted) {
-        setState(() { _hasNotification = false; });
-        _controller.stop();
-        _controller.reset();
-      }
     }
-  }
-
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        final offsetValue = _hasNotification ? _animation.value * (_controller.value < 0.5 ? 1 : -1) : 0.0;
-        return Transform.translate(
-          offset: Offset(offsetValue, 0),
-          child: child,
-        );
-      },
-      child: IconButton(
-        icon: Icon(
-            _hasNotification ? Icons.notifications_active : Icons.notifications_none,
-            color: _hasNotification ? topazColor : sonicSilver,
-            size: 24 // Giảm kích thước icon
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          icon: const Icon(
+            Icons.notifications_none, // Luôn dùng icon tĩnh
+            color: sonicSilver,
+            size: 24,
+          ),
+          onPressed: widget.onOpenNotification,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          splashRadius: 20,
         ),
-        onPressed: () {
-          widget.onOpenNotification();
-        },
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(),
-        splashRadius: 20, // Giảm splash radius
-      ),
+        if (_hasNotification)
+          Positioned(
+            top: 2,   // SỬA Ở ĐÂY: Dịch chấm vàng xuống một chút
+            right: 2, // SỬA Ở ĐÂY: Dịch chấm vàng qua trái một chút
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: topazColor, // Màu vàng
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
-
-
 // =======================================================
 // FeedScreen
 // =======================================================
@@ -479,7 +457,7 @@ class SuggestedFriendsSection extends StatelessWidget {
                 final userData = userDoc.data() as Map<String, dynamic>;
                 return SuggestedFriendCard(
                   userId: userDoc.id,
-                  userName: userData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
+                  displayName: userData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
                   userAvatarUrl: userData['photoURL'],
                 );
               },
@@ -496,13 +474,13 @@ class SuggestedFriendsSection extends StatelessWidget {
 // =======================================================
 class SuggestedFriendCard extends StatefulWidget {
   final String userId;
-  final String userName;
+  final String displayName;
   final String? userAvatarUrl;
 
   const SuggestedFriendCard({
     Key? key,
     required this.userId,
-    required this.userName,
+    required this.displayName,
     this.userAvatarUrl,
   }) : super(key: key);
 
@@ -593,7 +571,7 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
           GestureDetector(
             onTap: _navigateToProfile,
             child: Text(
-              widget.userName,
+              widget.displayName,
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -695,6 +673,7 @@ class _PostCardState extends State<PostCard> {
     final List<dynamic> saves = widget.postData['savedBy'] ?? [];
     _isSaved = _currentUser != null ? saves.contains(_currentUser!.uid) : false;
   }
+
   void _updateFirestoreLike() {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
@@ -703,16 +682,6 @@ class _PostCardState extends State<PostCard> {
         ? {'likedBy': FieldValue.arrayUnion([userId]), 'likesCount': FieldValue.increment(1)}
         : {'likedBy': FieldValue.arrayRemove([userId]), 'likesCount': FieldValue.increment(-1)};
     postRef.update(updateData).catchError((e) => print("Error updating like: $e"));
-  }
-
-  void _updateFirestoreSave() {
-    if (_currentUser == null || _postId.isEmpty) return;
-    final userId = _currentUser!.uid;
-    final postRef = _firestore.collection('posts').doc(_postId);
-    final updateData = _isSaved
-        ? {'savedBy': FieldValue.arrayUnion([userId])}
-        : {'savedBy': FieldValue.arrayRemove([userId])};
-    postRef.update(updateData).catchError((e) => print("Error updating save: $e"));
   }
 
   void _toggleLike() {
@@ -724,15 +693,61 @@ class _PostCardState extends State<PostCard> {
     _updateFirestoreLike();
   }
 
-  void _toggleSave() {
-    if (_currentUser == null) return;
-    setState(() { _isSaved = !_isSaved; });
-    _updateFirestoreSave();
+  // --- (SỬA) HÀM LƯU BÀI VIẾT VÀ GỬI THÔNG BÁO ---
+  void _toggleSave() async {
+    if (_currentUser == null || _postId.isEmpty) return;
+
+    final wasSaved = _isSaved;
+    setState(() {
+      _isSaved = !_isSaved;
+    });
+
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(_isSaved ? 'Đã lưu bài viết!' : 'Đã bỏ lưu bài viết.'),
       backgroundColor: _isSaved ? topazColor : sonicSilver,
       duration: const Duration(seconds: 1),
     ));
+
+    final postRef = _firestore.collection('posts').doc(_postId);
+    final userId = _currentUser!.uid;
+    final postOwnerId = widget.postData['uid'] as String?;
+
+    try {
+      if (_isSaved) { // Nếu hành động là LƯU
+        final WriteBatch batch = _firestore.batch();
+        batch.update(postRef, {'savedBy': FieldValue.arrayUnion([userId])});
+
+        // Tạo thông báo nếu người lưu không phải chủ bài viết
+        if (postOwnerId != null && postOwnerId != userId) {
+          final currentUserDoc = await _firestore.collection('users').doc(userId).get();
+          if (currentUserDoc.exists) {
+            final currentUserData = currentUserDoc.data() as Map<String, dynamic>;
+            final senderName = currentUserData['displayName'] ?? 'Một người dùng';
+            final senderAvatarUrl = currentUserData['photoURL'];
+
+            final notificationRef = _firestore.collection('users').doc(postOwnerId).collection('notifications').doc();
+            batch.set(notificationRef, {
+              'type': 'save', // Loại thông báo mới
+              'senderId': userId,
+              'senderName': senderName,
+              'senderAvatarUrl': senderAvatarUrl,
+              'destinationId': _postId, // ID của bài viết được lưu
+              'timestamp': FieldValue.serverTimestamp(),
+              'isRead': false,
+            });
+          }
+        }
+        await batch.commit();
+
+      } else { // Nếu hành động là BỎ LƯU
+        await postRef.update({'savedBy': FieldValue.arrayRemove([userId])});
+      }
+    } catch (e) {
+      print("Lỗi khi lưu/bỏ lưu bài viết: $e");
+      if (mounted) {
+        setState(() { _isSaved = wasSaved; }); // Quay lại trạng thái cũ nếu lỗi
+      }
+    }
   }
 
   void _showCommentSheet(BuildContext context) {
@@ -747,7 +762,7 @@ class _PostCardState extends State<PostCard> {
           heightFactor: 0.95,
           child: CommentBottomSheetContent(
             postId: _postId,
-            postUserName: widget.postData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
+            postUserName: widget.postData['displayName'] ?? 'Người dùng',
             currentCommentCount: _commentsCount,
             postMediaUrl: postMediaUrl,
             postCaption: widget.postData['postCaption'] ?? '',
@@ -772,7 +787,7 @@ class _PostCardState extends State<PostCard> {
       builder: (BuildContext sheetContext) {
         return ShareSheetContent(
           postId: _postId,
-          postUserName: widget.postData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
+          postUserName: widget.postData['displayName'] ?? 'Người dùng',
           initialShares: _sharesCount,
           onSharesUpdated: (newCount) {
             if (mounted) setState(() { _sharesCount = newCount; });
@@ -891,7 +906,7 @@ class _PostCardState extends State<PostCard> {
   Widget build(BuildContext context) {
     final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
     final String? imageUrl = widget.postData['imageUrl'] as String?;
-    final String userName = widget.postData['displayName'] as String? ?? 'Người dùng'; // SỬA Ở ĐÂY
+    final String userName = widget.postData['displayName'] as String? ?? 'Người dùng';
     final String locationTime = widget.postData['locationTime'] as String? ?? '';
     final String tag = widget.postData['tag'] as String? ?? '';
     final String caption = widget.postData['postCaption'] as String? ?? '';

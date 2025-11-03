@@ -15,6 +15,7 @@ const Color coralRed = Color(0xFFFD402C);
 const Color activeGreen = Color(0xFF32CD32); // <--- FIX: Thêm constant thiếu
 
 // Giả định PostCard (Đã có trong file gốc)
+// Giả định PostCard (Đã có trong file gốc)
 class PostCard extends StatelessWidget {
   final Map<String, dynamic> postData;
   final VoidCallback onStateChange;
@@ -40,7 +41,8 @@ class PostCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Post by: ${postData['userName'] ?? 'Người dùng'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            // SỬA Ở ĐÂY
+            Text("Post by: ${postData['displayName'] ?? 'Người dùng'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             const SizedBox(height: 5),
             _buildImagePlaceholder(postData['imageUrl']),
             const SizedBox(height: 5),
@@ -51,7 +53,6 @@ class PostCard extends StatelessWidget {
     );
   }
 }
-
 String _formatTimestampAgo(Timestamp timestamp) {
   final DateTime dateTime = timestamp.toDate();
   final difference = DateTime.now().difference(dateTime);
@@ -131,12 +132,13 @@ class _SearchScreenState extends State<SearchScreen> {
 
 
   // LOGIC: Thực hiện tìm kiếm TÀI KHOẢN VÀ BÀI VIẾT trên Firestore
+  // LOGIC: Thực hiện tìm kiếm TÀI KHOẢN VÀ BÀI VIẾT trên Firestore
   void _performSearch() async {
     final searchQuery = _searchController.text.trim();
     if (searchQuery.isEmpty) return;
 
     setState(() {
-      _currentQuery = searchQuery; // <-- THÊM DÒNG NÀY
+      _currentQuery = searchQuery;
       _isLoading = true;
       _hasSearched = true;
       _userSearchResults = [];
@@ -149,7 +151,7 @@ class _SearchScreenState extends State<SearchScreen> {
       final currentUserId = _currentUser?.uid ?? '';
 
       // === 1. TÌM KIẾM TÀI KHOẢN (USERS) ===
-      // FIX: Use explicit type arguments for Future.wait
+      // SỬA Ở ĐÂY
       final userQuerySnapshots = await Future.wait<QuerySnapshot>([
         _firestore.collection('users')
             .where('usernameLower', isGreaterThanOrEqualTo: queryLower)
@@ -157,8 +159,8 @@ class _SearchScreenState extends State<SearchScreen> {
             .limit(10)
             .get(),
         _firestore.collection('users')
-            .where('nameLower', isGreaterThanOrEqualTo: queryLower)
-            .where('nameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
+            .where('displayNameLower', isGreaterThanOrEqualTo: queryLower) // Đã sửa
+            .where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff') // Đã sửa
             .limit(10)
             .get(),
       ]);
@@ -166,7 +168,7 @@ class _SearchScreenState extends State<SearchScreen> {
       final Map<String, Map<String, dynamic>> userResultsMap = {};
       for (final snapshot in userQuerySnapshots) {
         for (final doc in snapshot.docs) {
-          if (doc.id == currentUserId) continue; // Exclude self
+          if (doc.id == currentUserId) continue;
           final data = doc.data() as Map<String, dynamic>;
           data['uid'] = doc.id;
           userResultsMap[doc.id] = data;
@@ -176,16 +178,16 @@ class _SearchScreenState extends State<SearchScreen> {
 
 
       // === 2. TÌM KIẾM BÀI VIẾT (POSTS) ===
-      // FIX: Use explicit type arguments for Future.wait
+      // SỬA Ở ĐÂY
       final postQuerySnapshots = await Future.wait<QuerySnapshot>([
         _firestore.collection('posts')
             .where('tag', isEqualTo: '#$queryLower')
             .orderBy('timestamp', descending: true)
             .limit(10).get(),
         _firestore.collection('posts')
-            .where('userNameLower', isGreaterThanOrEqualTo: queryLower)
-            .where('userNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
-            .orderBy('userNameLower')
+            .where('displayNameLower', isGreaterThanOrEqualTo: queryLower) // Đã sửa
+            .where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff') // Đã sửa
+            .orderBy('displayNameLower') // Đã sửa
             .orderBy('timestamp', descending: true)
             .limit(10).get(),
       ]);
@@ -228,15 +230,17 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-
+  // WIDGET MỚI: Xây dựng một item kết quả tìm kiếm TÀI KHOẢN
   // WIDGET MỚI: Xây dựng một item kết quả tìm kiếm TÀI KHOẢN
   Widget _buildUserResultItem(Map<String, dynamic> userData) {
     final String userId = userData['uid'] as String? ?? '';
-    final String name = userData['name'] as String? ?? 'Người dùng';
+    // SỬA Ở ĐÂY
+    final String name = userData['displayName'] as String? ?? 'Người dùng';
     final String username = userData['username'] as String? ?? '';
-    final String? avatarUrl = userData['avatarUrl'] as String?;
+    // VÀ SỬA Ở ĐÂY
+    final String? avatarUrl = userData['photoURL'] as String?;
     final String? bio = userData['bio'] as String?;
-    final bool isFriend = false; // Thay thế bằng logic kiểm tra bạn bè thực tế
+    final bool isFriend = false;
 
     final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
         ? NetworkImage(avatarUrl) : null;
@@ -258,7 +262,6 @@ class _SearchScreenState extends State<SearchScreen> {
             ? const Icon(Icons.check, color: activeGreen)
             : ElevatedButton(
           onPressed: () {
-            // TODO: Logic Gửi lời mời kết bạn
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã gửi lời mời tới $name (Mock).')));
           },
           style: ElevatedButton.styleFrom(
@@ -273,7 +276,6 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
     );
   }
-
 
   // WIDGET: Xây dựng nội dung Body (Updated)
   Widget _buildBodyContent(BuildContext context) {

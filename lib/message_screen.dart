@@ -34,7 +34,15 @@ class _MessageScreenState extends State<MessageScreen> {
     super.initState();
     _currentUser = _auth.currentUser;
     if (_currentUser != null) {
-      _currentUserName = _currentUser!.displayName ?? _currentUser!.email?.split('@').first ?? 'Bạn';
+      // SỬA: Lấy tên người dùng từ Firestore
+      _firestore.collection('users').doc(_currentUser!.uid).get().then((doc) {
+        if (mounted && doc.exists) {
+          final data = doc.data() as Map<String, dynamic>;
+          setState(() {
+            _currentUserName = data['displayName'] ?? 'Bạn';
+          });
+        }
+      });
       _getOrCreateChatId();
     }
   }
@@ -77,9 +85,10 @@ class _MessageScreenState extends State<MessageScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty || _chatId == null || _currentUser == null || _chatId == 'LIST_VIEW') return;
 
+    // SỬA: Đảm bảo _currentUserName đã được cập nhật trước khi gửi
     final messageContent = {
       'senderId': _currentUser!.uid,
-      'senderName': _currentUserName,
+      'senderName': _currentUserName, // Tên này đã được lấy từ Firestore
       'text': text,
       'timestamp': FieldValue.serverTimestamp(),
       'type': 'text',
@@ -102,7 +111,6 @@ class _MessageScreenState extends State<MessageScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể gửi tin nhắn.'), backgroundColor: topazColor));
     }
   }
-
   Widget _buildMessageBubble(String senderId, String text, Timestamp timestamp) {
     final bool isMe = senderId == _currentUser?.uid;
     final String timeString = TimeOfDay.fromDateTime(timestamp.toDate()).format(context);
@@ -229,6 +237,7 @@ class _MessageScreenState extends State<MessageScreen> {
 // ====================================================================
 // WIDGET MỚI: ĐỂ HIỂN THỊ MỘT DÒNG TRONG DANH SÁCH CHAT
 // ====================================================================
+// THAY THẾ TOÀN BỘ WIDGET NÀY
 class _ChatListItem extends StatelessWidget {
   final DocumentSnapshot chatDoc;
   const _ChatListItem({required this.chatDoc});
@@ -253,15 +262,17 @@ class _ChatListItem extends StatelessWidget {
         if (!userSnapshot.hasData) return const ListTile(title: Text('Đang tải...', style: TextStyle(color: sonicSilver)));
 
         final userData = userSnapshot.data!.data() as Map<String, dynamic>;
-        final String targetUserName = userData['name'] ?? 'Người dùng';
-        final String targetAvatarUrl = userData['avatarUrl'] ?? ''; // Giả sử có trường avatarUrl
+        // SỬA Ở ĐÂY
+        final String targetUserName = userData['displayName'] ?? 'Người dùng';
+        // VÀ SỬA Ở ĐÂY
+        final String? targetAvatarUrl = userData['photoURL'] as String?;
 
         return ListTile(
           leading: CircleAvatar(
             radius: 25,
             backgroundColor: darkSurface,
-            backgroundImage: targetAvatarUrl.isNotEmpty ? NetworkImage(targetAvatarUrl) : null,
-            child: targetAvatarUrl.isEmpty ? Text(targetUserName[0], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)) : null,
+            backgroundImage: (targetAvatarUrl != null && targetAvatarUrl.isNotEmpty) ? NetworkImage(targetAvatarUrl) : null,
+            child: (targetAvatarUrl == null || targetAvatarUrl.isEmpty) ? Text(targetUserName.isNotEmpty ? targetUserName[0] : 'U', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)) : null,
           ),
           title: Text(targetUserName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           subtitle: Text(lastMessage, style: const TextStyle(color: sonicSilver), maxLines: 1, overflow: TextOverflow.ellipsis),

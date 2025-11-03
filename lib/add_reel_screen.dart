@@ -27,6 +27,7 @@ class _AddReelScreenState extends State<AddReelScreen> {
     );
   }
 
+  // SỬA HÀM NÀY
   Future<void> _uploadReel() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -34,13 +35,28 @@ class _AddReelScreenState extends State<AddReelScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Lấy thông tin người dùng từ Firestore trước
+      DocumentSnapshot userDoc = await _firestore.collection('users').doc(user.uid).get();
+      String displayName;
+      String? userAvatarUrl;
+
+      if (userDoc.exists && userDoc.data() != null) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          displayName = userData['displayName'] ?? 'Người dùng Zink';
+          userAvatarUrl = userData['photoURL'];
+      } else {
+          // Phương án dự phòng: Lấy từ Auth nếu không có trên Firestore
+          displayName = user.displayName ?? 'Người dùng Zink';
+          userAvatarUrl = user.photoURL;
+      }
+
       String mockVideoUrl = 'https://example.com/video.mp4';
       String mockThumbnailUrl = 'https://example.com/thumbnail.jpg';
 
       await _firestore.collection('reels').add({
         'uid': user.uid,
-        'userName': user.displayName ?? 'Người dùng Zink',
-        'userAvatarUrl': user.photoURL ?? '',
+        'displayName': displayName, // SỬA: Dùng 'displayName'
+        'userAvatarUrl': userAvatarUrl ?? '', // SỬA: Dùng biến đã lấy được
         'desc': _descriptionController.text.trim(),
         'videoUrl': mockVideoUrl, 
         'thumbnailUrl': mockThumbnailUrl,
@@ -77,8 +93,7 @@ class _AddReelScreenState extends State<AddReelScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      // SỬA: Xóa AppBar ở đây
-      body: Column( // SỬA: Bọc nội dung bằng Column
+      body: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
@@ -134,7 +149,6 @@ class _AddReelScreenState extends State<AddReelScreen> {
               ),
             ),
           ),
-          // SỬA: Thêm nút Đăng ở dưới cùng
           _buildPostButton(),
         ],
       ),
@@ -160,7 +174,6 @@ class _AddReelScreenState extends State<AddReelScreen> {
     );
   }
 
-  // SỬA: Widget cho nút Đăng mới
   Widget _buildPostButton() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0).copyWith(bottom: MediaQuery.of(context).padding.bottom + 8.0),

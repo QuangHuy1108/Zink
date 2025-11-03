@@ -60,14 +60,23 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
   }
 
   // SỬA Ở ĐÂY: THÊM LOGIC TẠO THÔNG BÁO
+  // SỬA Ở ĐÂY: THÊM LOGIC TẠO THÔNG BÁO
   void _postComment() async {
     final text = _commentController.text.trim();
     final user = _currentUser;
     if (text.isEmpty || user == null) return;
     FocusScope.of(context).unfocus();
 
-    final userName = user.displayName ?? user.email?.split('@').first ?? 'Người dùng Zink';
-    final userAvatarUrl = user.photoURL;
+    // Lấy dữ liệu người dùng từ Firestore
+    DocumentSnapshot userDoc = await _firestore.collection('users').doc(user.uid).get();
+    String displayName = 'Người dùng Zink';
+    String? photoURL;
+    if(userDoc.exists) {
+      final userData = userDoc.data() as Map<String, dynamic>;
+      displayName = userData['displayName'] ?? 'Người dùng Zink';
+      photoURL = userData['photoURL'];
+    }
+
     final parentId = _replyingToComment?.id;
 
     _commentController.clear();
@@ -77,8 +86,8 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
       // 1. Lưu bình luận vào sub-collection của bài viết
       final newCommentRef = await _firestore.collection('posts').doc(widget.postId).collection('comments').add({
         'userId': user.uid,
-        'userName': userName,
-        'userAvatarUrl': userAvatarUrl,
+        'displayName': displayName, // SỬA: Dùng 'displayName'
+        'userAvatarUrl': photoURL, // SỬA: Dùng photoURL
         'text': text,
         'timestamp': FieldValue.serverTimestamp(),
         'parentId': parentId,
@@ -92,7 +101,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
       // 2. Cập nhật số lượng bình luận của bài viết
       final postRef = _firestore.collection('posts').doc(widget.postId);
       batch.update(postRef, {'commentsCount': FieldValue.increment(1)});
-      
+
       // 3. Lấy dữ liệu bài viết để tìm chủ sở hữu và tạo thông báo
       final postSnapshot = await postRef.get();
       if(postSnapshot.exists) {
@@ -105,8 +114,8 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
           batch.set(notificationRef, {
             'type': 'comment',
             'senderId': user.uid,
-            'senderName': userName,
-            'senderAvatarUrl': userAvatarUrl,
+            'senderName': displayName, // SỬA: Dùng displayName đã lấy
+            'senderAvatarUrl': photoURL, // SỬA: Dùng photoURL đã lấy
             'destinationId': widget.postId, // ID của bài viết
             'commentId': newCommentRef.id, // ID của bình luận vừa tạo
             'contentPreview': text,
@@ -127,7 +136,6 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
       print("Error posting comment: $e");
     }
   }
-
   void _toggleCommentLike(Comment comment) async {
     final userId = _currentUser?.uid;
     if (userId == null) return;
