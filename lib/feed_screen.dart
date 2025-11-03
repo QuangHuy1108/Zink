@@ -10,10 +10,6 @@ import 'comment_screen.dart' hide Comment;
 import 'share_sheet.dart';
 import 'search_screen.dart';
 import 'notification_screen.dart' hide Comment, StoryViewScreen, CommentBottomSheetContent, ProfileScreen;
-import 'create_story_screen.dart' hide StoryState;
-import 'story_view_screen.dart' hide StoryContent;
-import 'story_manager_screen.dart' hide StoryContent;
-import 'suggested_friend_card.dart' hide ProfileScreen;
 import 'post_detail_screen.dart';
 import 'message_screen.dart';
 
@@ -49,7 +45,7 @@ class Comment {
     return Comment(
       id: doc.id,
       userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Người dùng Zink',
+      userName: data['displayName'] ?? 'Người dùng Zink', // SỬA Ở ĐÂY
       userAvatarUrl: data['userAvatarUrl'],
       text: data['text'] ?? '',
       timestamp: data['timestamp'] ?? Timestamp.now(),
@@ -71,37 +67,6 @@ const Color coralRed = Color(0xFFFD402C);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color activeGreen = Color(0xFF32CD32);
-
-// --- Story State ---
-class StoryContent {
-  final String text;
-  final Offset textPosition;
-  final String song;
-  final Offset songPosition;
-  final String location;
-  final List<String> taggedFriends;
-
-  StoryContent({
-    required this.text,
-    required this.textPosition,
-    required this.song,
-    required this.songPosition,
-    required this.location,
-    required this.taggedFriends,
-  });
-}
-class StoryState {
-  DateTime? lastPostTime;
-  List<String> likedBy = [];
-  StoryContent? activeStoryContent;
-
-  bool get hasActiveStory {
-    if (lastPostTime == null) return false;
-    return DateTime.now().difference(lastPostTime!) < const Duration(hours: 24);
-  }
-}
-final StoryState globalUserStoryState = StoryState();
-// --- Kết thúc Story State ---
 
 
 // =======================================================
@@ -221,292 +186,81 @@ class FeedScreen extends StatefulWidget {
 }
 
 class _FeedScreenState extends State<FeedScreen> {
+  // ... (giữ lại các biến final _auth, _firestore, _currentUser, _headerContentHeight)
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   User? _currentUser;
-  late final Stream<QuerySnapshot>_userStoriesStream;
+  final double _headerContentHeight = 45.0;
 
-  final Set<String> _viewedUserIds = {};
-  final double _headerContentHeight = 45.0; // Giữ nguyên chiều cao nhỏ
+  // --- BẮT ĐẦU PHẦN CẦN THAY THẾ/THÊM VÀO ---
 
-  @override // Giữ lại một @override
+  // Lưu trữ danh sách bạn bè gợi ý
+  List<DocumentSnapshot> _suggestedFriends = [];
+  // Cờ để biết đã fetch dữ liệu hay chưa
+  bool _hasFetchedSuggestions = false;
+
+  @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _checkMyStoryStatus();
-    _userStoriesStream = _firestore        .collection('users')
-        .where('hasActiveStory', isEqualTo: true)
-        .orderBy('lastStoryTimestamp', descending: true)
-        .limit(20)
-        .snapshots();
+    _fetchSuggestedFriends(); // Gọi hàm để tải dữ liệu gợi ý khi màn hình khởi động
   }
-  void _loadActiveStories() {
-    _userStoriesStream = _firestore
-        .collection('users')
-        .where('hasActiveStory', isEqualTo: true)
-        .orderBy('lastStoryTimestamp', descending: true)
-        .limit(20)
-        .snapshots();
-  }
-
-
-
-  void _forceRebuild() { if (mounted) setState(() {}); }
-  // BẠN HÃY THÊM TOÀN BỘ HÀM NÀY VÀO BÊN TRONG CLASS _FeedScreenState
-
-// Hàm mới để kiểm tra và dọn dẹp cờ hasActiveStory
-  Future<void> _checkMyStoryStatus() async {
-    if (_currentUser == null) return;
-
-    final userDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
-    final userData = userDoc.data();
-
-    // Chỉ kiểm tra nếu userDoc tồn tại và cờ đang là true
-    if (userData != null && (userData['hasActiveStory'] as bool? ?? false)) {
-      // Lấy story mới nhất của người dùng
-      final lastStoryQuery = await _firestore.collection('stories')
-          .where('userId', isEqualTo: _currentUser!.uid)
-          .orderBy('timestamp', descending: true)
-          .limit(1)
-          .get();
-
-      if (lastStoryQuery.docs.isEmpty) {
-        // Nếu không có story nào nhưng cờ vẫn là true -> tắt cờ
-        await userDoc.reference.update({'hasActiveStory': false});
-      } else {
-        // Nếu có story, kiểm tra xem nó đã hết hạn chưa
-        final lastStory = lastStoryQuery.docs.first.data();
-        final expiresAt = lastStory['expiresAt'] as Timestamp?;
-        if (expiresAt != null && expiresAt.toDate().isBefore(DateTime.now())) {
-          // Story cuối cùng đã hết hạn -> tắt cờ
-          await userDoc.reference.update({'hasActiveStory': false});
-        }
-      }
-    }
-  }
-
-  void _navigateToStoryScreen(Widget screen, VoidCallback onClosed) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => screen,
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final backgroundScale = Tween<double>(begin: 1.0, end: 0.95).animate(CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeOut));
-          final foregroundOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: animation, curve: Curves.easeIn));
-          return ScaleTransition(
-            scale: backgroundScale,
-            child: FadeTransition(opacity: foregroundOpacity, child: child),
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 300),
-        reverseTransitionDuration: const Duration(milliseconds: 300),
-        opaque: false,
-      ),
-    ).then((_) => onClosed());
-  }
-  // Đặt hàm này bên trong _FeedScreenState
-  void _navigateToStoryViewForUser(DocumentSnapshot userDoc) async {
-    final String userId = userDoc.id;
-    final userData = userDoc.data() as Map<String, dynamic>? ?? {};
-    final String userName = userData['name'] ?? 'Người dùng';
-    final String? avatarUrl = userData['avatarUrl'] as String?;
-
-    // THÊM DÒNG NÀY ĐỂ CẬP NHẬT TRẠNG THÁI "ĐÃ XEM"
-    if (mounted) setState(() => _viewedUserIds.add(userId));
-
-    try {
-      final storiesSnapshot = await _firestore
-          .collection('stories')
-          .where('userId', isEqualTo: userId)
-          .where('expiresAt', isGreaterThan: Timestamp.now())
-          .orderBy('timestamp', descending: false)
-          .get();
-
-      final storyDocs = storiesSnapshot.docs;
-
-      if (storyDocs.isNotEmpty && mounted) {
-        Navigator.of(context).push(
-          PageRouteBuilder(
-              opaque: false,
-              pageBuilder: (context, _, __) => StoryViewScreen(
-                  userName: userName,
-                  avatarUrl: avatarUrl,
-                  storyDocs: storyDocs, // Truyền toàn bộ story docs của user đó
-              ),
-          ),
-      ).then((_) => _forceRebuild());
-    }
-  } catch (e) {
-    print("Lỗi khi tải story của người dùng: $e");
-  }
-  }
-
-
-  String _formatActivityTime(DateTime? lastActive, bool isOnline) { return ''; }
 
   Future<void> _handleRefresh() async {
-    await _checkMyStoryStatus();
-    if (mounted) {
-      setState(() {
-        _viewedUserIds.clear(); // <-- SỬA LẠI THÀNH BIẾN NÀY
-      });
+    // Khi refresh, tải lại danh sách gợi ý và để StreamBuilder tự cập nhật bài viết
+    _hasFetchedSuggestions = false;
+    await _fetchSuggestedFriends();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _fetchSuggestedFriends() async {
+    if (_hasFetchedSuggestions || _currentUser == null) return;
+
+    try {
+      // 1. Lấy danh sách những người mà người dùng hiện tại đang theo dõi
+      final followingSnapshot = await _firestore
+          .collection('users')
+          .doc(_currentUser!.uid)
+          .collection('following')
+          .get();
+      final followingIds = followingSnapshot.docs.map((doc) => doc.id).toList();
+      followingIds.add(_currentUser!.uid); // Loại bỏ chính mình khỏi danh sách gợi ý
+
+      // 2. Lấy danh sách người dùng, loại trừ những người đã theo dõi
+      final usersSnapshot = await _firestore.collection('users').limit(10).get();
+
+      final suggestions = usersSnapshot.docs.where((doc) {
+        return !followingIds.contains(doc.id);
+      }).toList();
+
+      // Xáo trộn danh sách gợi ý và lấy 5 người
+      suggestions.shuffle();
+      if (mounted) {
+        setState(() {
+          _suggestedFriends = suggestions.take(5).toList();
+          _hasFetchedSuggestions = true;
+        });
+      }
+    } catch (e) {
+      print("Lỗi khi lấy danh sách gợi ý kết bạn: $e");
     }
-    await Future.delayed(const Duration(milliseconds: 200));
   }
 
-  Widget _buildUserStoryAvatar(BuildContext context, DocumentSnapshot userDoc) {
-    final userData = userDoc.data() as Map<String, dynamic>? ?? {};
-    final String userId = userDoc.id;
-    final String userName = userData['name'] ?? 'Người dùng';
-    final String? userAvatarUrl = userData['avatarUrl'] as String?;
-    final bool hasViewed = _viewedUserIds.contains(userId); // Sửa: dùng _viewedUserIds
-
-    final ImageProvider? avatarProvider = (userAvatarUrl != null && userAvatarUrl.isNotEmpty) ? NetworkImage(userAvatarUrl) : null;
-    final BoxDecoration avatarBorder = !hasViewed
-        ? BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [topazColor.withOpacity(0.8), earthYellow.withOpacity(0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight))
-        : BoxDecoration(shape: BoxShape.circle, border: Border.all(color: sonicSilver.withOpacity(0.5), width: 1.5));
-
-    return GestureDetector(
-      onTap: () => _navigateToStoryViewForUser(userDoc), // Sửa: Gọi hàm điều hướng mới
-      child: Container(
-        width: 70,
-        margin: const EdgeInsets.only(right: 12),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Container(padding: const EdgeInsets.all(2.5), decoration: avatarBorder, child: CircleAvatar(radius: 30, backgroundColor: darkSurface, backgroundImage: avatarProvider, child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 30) : null)),
-          const SizedBox(height: 5),
-          Text(userName.split(' ').first, style: TextStyle(color: !hasViewed ? Colors.white : sonicSilver, fontSize: 12, fontWeight: !hasViewed ? FontWeight.w500 : FontWeight.normal), overflow: TextOverflow.ellipsis, maxLines: 1),
-        ]),
-      ),
-    );
-  }
-  Widget _buildMyStoryCreatorAvatar(BuildContext context) {
-    final String? currentUserAvatar = _currentUser?.photoURL;
-    final ImageProvider? avatarProvider = (currentUserAvatar != null && currentUserAvatar.isNotEmpty)
-        ? NetworkImage(currentUserAvatar)
-        : null;
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (context) => const CreateStoryScreen()))
-            .then((_) => _forceRebuild());
-      },
-      child: Container(
-        width: 70,
-        margin: const EdgeInsets.only(right: 12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                CircleAvatar(
-                  radius: 30,
-                  backgroundColor: darkSurface,
-                  backgroundImage: avatarProvider,
-                  child: avatarProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 30) : null,
-                ),
-                Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    color: Colors.blueAccent,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.black, width: 1.5),
-                  ),
-                  child: const Icon(Icons.add, size: 12, color: Colors.white),
-                ),
-              ],
-            ),
-            const SizedBox(height: 5),
-            const Text(
-              'Tin của bạn',
-              style: TextStyle(color: Colors.white, fontSize: 12),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-
-  bool isOnlineOrRecent(DateTime? lastActive) { return false; }
-  void _navigateToProfile(String targetUsernameOrUid) { /* ... */ }
-
-  // Widget header nội dung (không bao gồm padding status bar)
-  Widget _buildHeaderContent() {
-    return Container(
-      color: Colors.black,
-      height: _headerContentHeight - 10, // Chiều cao nội dung (45 - 10 = 35)
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // =======================================================
-          // THAY ĐỔI: Tăng kích thước chữ "Zink"
-          // =======================================================
-          const Text(
-            'Zink',
-            style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: topazColor), // Tăng fontSize lên 32
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.search, color: sonicSilver, size: 24),
-            onPressed: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const SearchScreen()));
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            splashRadius: 20,
-          ),
-          const SizedBox(width: 8),
-          AnimatedNotificationBell(
-            onOpenNotification: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (context) => const NotificationScreen()));
-            },
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 24),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => const MessageScreen()),
-              );
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            splashRadius: 20,
-          ),
-        ],
-      ),
-    );
-  }
-
-
-  Widget _buildSuggestedFriendsSection(BuildContext context) {
-    final List<Map<String, dynamic>> suggestedFriends = [];
-    if (suggestedFriends.isEmpty) { return const SizedBox.shrink(); }
-    return Column( /*...*/ );
-  }
-
-  // Widget hiển thị danh sách bài viết (TRẢ VỀ SLIVERLIST)
-// XÓA HÀM _buildPostFeedSliver() CŨ CỦA BẠN VÀ THAY BẰNG HÀM NÀY
-
+  // Widget _buildPostFeedSliver đã được sửa
   Widget _buildPostFeedSliver() {
-    final currentUserId = _currentUser?.uid ?? '';
     Query query = _firestore.collection('posts').orderBy('timestamp', descending: true);
+    const int suggestionInsertionIndex = 3;
 
     return StreamBuilder<QuerySnapshot>(
       stream: query.limit(20).snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting && !_hasFetchedSuggestions) {
           return const SliverFillRemaining(
             child: Center(child: CircularProgressIndicator(color: topazColor)),
             hasScrollBody: false,
           );
         }
         if (snapshot.hasError) {
-          print("Lỗi tải bài viết: ${snapshot.error}");
-          // SỬA: Bỏ const ở Center vì Text dùng biến
           return SliverFillRemaining(
             child: Center(child: Text('Lỗi tải bài viết: ${snapshot.error}', style: const TextStyle(color: coralRed))),
             hasScrollBody: false,
@@ -514,69 +268,137 @@ class _FeedScreenState extends State<FeedScreen> {
         }
 
         final posts = snapshot.data?.docs ?? [];
-        if (posts.isEmpty) {
-          // SỬA: Bỏ const ở Center và thêm vào các widget con
+        if (posts.isEmpty && _suggestedFriends.isEmpty) {
           return const SliverFillRemaining(
             child: Center(
                 child: Padding(
                     padding: EdgeInsets.all(20),
-                    child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver))
-                )
-            ),
+                    child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver)))),
             hasScrollBody: false,
           );
+        }
+
+        List<dynamic> combinedList = List.from(posts);
+
+        // Chèn mục gợi ý vào danh sách nếu có đủ bài viết
+        if (_suggestedFriends.isNotEmpty && posts.length >= suggestionInsertionIndex) {
+          combinedList.insert(suggestionInsertionIndex, _suggestedFriends);
+        } else if (_suggestedFriends.isNotEmpty) {
+          // Nếu không đủ bài viết, chèn vào cuối
+          combinedList.add(_suggestedFriends);
         }
 
         return SliverList(
           delegate: SliverChildBuilderDelegate(
                 (context, index) {
-              final doc = posts[index];
+              final item = combinedList[index];
+
+              // KIỂM TRA: Nếu item là danh sách gợi ý, hiển thị SuggestedFriendsSection
+              if (item is List<DocumentSnapshot>) {
+                return SuggestedFriendsSection(suggestedFriends: item);
+              }
+
+              // Nếu không, nó là một bài viết (DocumentSnapshot)
+              final doc = item as DocumentSnapshot;
               Map<String, dynamic> postData = doc.data() as Map<String, dynamic>? ?? {};
               postData['id'] = doc.id;
-
               postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp'] as Timestamp) : 'Vừa xong';
 
+              EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0);
+              
+              if (index == 0) {
+                 padding = const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 8.0, top: 0); 
+              }
+
               return Padding(
-                padding: EdgeInsets.only(
-                  left: 16.0,
-                  right: 16.0,
-                  bottom: index < posts.length - 1 ? 8.0 : 0,
-                ),
+                padding: padding,
                 child: PostCard(
                   key: ValueKey(postData['id']),
                   postData: postData,
                 ),
               );
             },
-            childCount: posts.length,
+            childCount: combinedList.length,
           ),
         );
       },
     );
   }
 
+  // --- KẾT THÚC PHẦN THAY THẾ/THÊM VÀO ---
+
   String _formatTimestampAgo(Timestamp timestamp) {
-    final DateTime dateTime = timestamp.toDate();
-    final difference = DateTime.now().difference(dateTime);
-    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
-    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
-    if (difference.inHours < 24) return '${difference.inHours} giờ';
-    return '${difference.inDays} ngày';
+    final now = DateTime.now();
+    final difference = now.difference(timestamp.toDate());
+
+    if (difference.inDays > 0) {
+      return '${difference.inDays}d';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m';
+    } else {
+      return 'Vừa xong';
+    }
   }
 
+  Widget _buildHeaderContent() {
+    return Container(
+      height: _headerContentHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Zink Logo
+          const Text(
+            'Zink',
+            style: TextStyle(
+              fontFamily: 'Roboto', // Or your custom font
+              fontWeight: FontWeight.bold,
+              fontSize: 24,
+              color: Colors.white,
+            ),
+          ),
+          // Action Icons
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.search, color: sonicSilver, size: 24),
+                onPressed: () {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchScreen()));
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                splashRadius: 20,
+              ),
+              const SizedBox(width: 16),
+              AnimatedNotificationBell(
+                onOpenNotification: () {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationScreen()));
+                },
+              ),
+              const SizedBox(width: 16),
+              IconButton(
+                icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 24),
+                onPressed: () {
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MessageScreen()));
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                splashRadius: 20,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
-  @override
+ @override
   Widget build(BuildContext context)  {
     final double topPadding = MediaQuery.of(context).padding.top;
     final double appBarTotalHeight = topPadding + _headerContentHeight;
-    final double collapsedAppBarHeight = (kToolbarHeight + topPadding < appBarTotalHeight) ? kToolbarHeight + topPadding : appBarTotalHeight;
-
-
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.black,
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
-    ));
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -595,75 +417,18 @@ class _FeedScreenState extends State<FeedScreen> {
               elevation: 0,
               automaticallyImplyLeading: false,
               expandedHeight: appBarTotalHeight,
-              collapsedHeight: collapsedAppBarHeight,
-              toolbarHeight: collapsedAppBarHeight,
+              toolbarHeight: appBarTotalHeight,
               flexibleSpace: FlexibleSpaceBar(
+                titlePadding: EdgeInsets.zero,
+                centerTitle: true,
                 background: Container(
                   color: Colors.black,
-                  padding: EdgeInsets.only(
-                      top: topPadding + 5,
-                      bottom: 5
-                  ),
+                  padding: EdgeInsets.only(top: topPadding),
                   child: _buildHeaderContent(),
                 ),
-                titlePadding: EdgeInsets.zero,
-                centerTitle: false,
-                title: const SizedBox.shrink(),
-              ),
-              titleSpacing: 0,
-            ),
-
-            // Story Avatars Row
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 100,
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: _userStoriesStream, // <-- SỬA: Dùng stream mới
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting && (!snapshot.hasData || snapshot.data!.docs.isEmpty)) {
-                      return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver)));
-                    }
-                    if (snapshot.hasError) {
-                      return Center(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16.0), child: Text('Lỗi tải story: ${snapshot.error}', style: const TextStyle(color: coralRed, fontSize: 12))));
-                    }
-                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                      return ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16.0), children: [_buildMyStoryCreatorAvatar(context)]);
-                    }
-
-                    // SỬA: Logic mới để xử lý danh sách người dùng
-                    final userDocs = snapshot.data!.docs;
-                    final currentUserDocs = userDocs.where((doc) => doc.id == _currentUser?.uid).toList();
-                    final otherUserDocs = userDocs.where((doc) => doc.id != _currentUser?.uid).toList();
-
-                    return ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      children: [
-                        // Nếu tôi có story, hiển thị avatar story của tôi trước
-                        if (currentUserDocs.isNotEmpty)
-                          _buildUserStoryAvatar(context, currentUserDocs.first)
-                        else
-                          _buildMyStoryCreatorAvatar(context),
-
-                        // Sau đó là story của những người khác
-                        ...otherUserDocs.map((doc) => _buildUserStoryAvatar(context, doc)).toList(),
-                      ],
-                    );
-                  },
-                ),
               ),
             ),
-
-
-            // Suggested Friends
-            SliverToBoxAdapter(
-              child: _buildSuggestedFriendsSection(context),
-            ),
-
-            // Post Feed
             _buildPostFeedSliver(),
-
-            // Padding cuối cùng
             const SliverToBoxAdapter(
               child: SizedBox(height: 50),
             ),
@@ -672,12 +437,214 @@ class _FeedScreenState extends State<FeedScreen> {
       ),
     );
   }
+}
 
-  bool _storiesStreamHasData(AsyncSnapshot<QuerySnapshot> snapshot) {
-    return snapshot.connectionState != ConnectionState.waiting || (snapshot.hasData || snapshot.hasError);
+class SuggestedFriendsSection extends StatelessWidget {
+  final List<DocumentSnapshot> suggestedFriends;
+
+  const SuggestedFriendsSection({
+    Key? key,
+    required this.suggestedFriends,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: Text(
+              'Gợi ý cho bạn',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 200, // Increased height to accommodate buttons
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              itemCount: suggestedFriends.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final userDoc = suggestedFriends[index];
+                final userData = userDoc.data() as Map<String, dynamic>;
+                return SuggestedFriendCard(
+                  userId: userDoc.id,
+                  userName: userData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
+                  userAvatarUrl: userData['photoURL'],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =======================================================
+// SuggestedFriendCard Widget (STATEFUL VERSION)
+// =======================================================
+class SuggestedFriendCard extends StatefulWidget {
+  final String userId;
+  final String userName;
+  final String? userAvatarUrl;
+
+  const SuggestedFriendCard({
+    Key? key,
+    required this.userId,
+    required this.userName,
+    this.userAvatarUrl,
+  }) : super(key: key);
+
+  @override
+  State<SuggestedFriendCard> createState() => _SuggestedFriendCardState();
+}
+
+class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
+  bool _isFriendRequestSent = false;
+  bool _isFollowing = false;
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  void _navigateToProfile() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => ProfileScreen(
+        targetUserId: widget.userId,
+        onNavigateToHome: () {},
+        onLogout: () {},
+      ),
+    ));
   }
 
-} // End _FeedScreenState
+  void _toggleFriendRequest() {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) return;
+
+    final myDocRef = _firestore.collection('users').doc(currentUser.uid);
+    final theirDocRef = _firestore.collection('users').doc(widget.userId);
+
+    if (_isFriendRequestSent) {
+      myDocRef.update({'sentRequests': FieldValue.arrayRemove([widget.userId])});
+      theirDocRef.update({'receivedRequests': FieldValue.arrayRemove([currentUser.uid])});
+    } else {
+      myDocRef.update({'sentRequests': FieldValue.arrayUnion([widget.userId])});
+      theirDocRef.update({'receivedRequests': FieldValue.arrayUnion([currentUser.uid])});
+    }
+
+    setState(() {
+      _isFriendRequestSent = !_isFriendRequestSent;
+    });
+  }
+
+  void _toggleFollow() {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) return;
+
+    final myFollowingRef = _firestore.collection('users').doc(currentUser.uid).collection('following');
+    final theirFollowersRef = _firestore.collection('users').doc(widget.userId).collection('followers');
+
+    if (_isFollowing) {
+      myFollowingRef.doc(widget.userId).delete();
+      theirFollowersRef.doc(currentUser.uid).delete();
+    } else {
+      myFollowingRef.doc(widget.userId).set({'timestamp': FieldValue.serverTimestamp()});
+      theirFollowersRef.doc(currentUser.uid).set({'timestamp': FieldValue.serverTimestamp()});
+    }
+
+    setState(() {
+      _isFollowing = !_isFollowing;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 150,
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: darkSurface,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: Colors.grey[800]!, width: 1),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          GestureDetector(
+            onTap: _navigateToProfile,
+            child: CircleAvatar(
+              radius: 35,
+              backgroundColor: sonicSilver,
+              backgroundImage: (widget.userAvatarUrl != null) ? NetworkImage(widget.userAvatarUrl!) : null,
+              child: (widget.userAvatarUrl == null) ? const Icon(Icons.person, size: 30, color: Colors.white) : null,
+            ),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: _navigateToProfile,
+            child: Text(
+              widget.userName,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const Spacer(),
+          SizedBox(
+            height: 32,
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _toggleFriendRequest,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isFriendRequestSent ? Colors.grey[800] : topazColor,
+                foregroundColor: _isFriendRequestSent ? sonicSilver : Colors.black,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: Text(
+                _isFriendRequestSent ? 'Hủy lời mời' : 'Kết bạn',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 32,
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _toggleFollow,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isFollowing ? Colors.grey[800] : Colors.blueAccent,
+                foregroundColor: _isFollowing ? sonicSilver : Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: Text(
+                _isFollowing ? 'Hủy theo dõi' : 'Theo dõi',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 
 // =======================================================
@@ -685,7 +652,7 @@ class _FeedScreenState extends State<FeedScreen> {
 // =======================================================
 class PostCard extends StatefulWidget {
   final Map<String, dynamic> postData;
-  const PostCard({super.key, required this.postData}); // <- Sửa lại constructor
+  const PostCard({super.key, required this.postData});
   @override
   State<PostCard> createState() => _PostCardState();
 }
@@ -711,9 +678,7 @@ class _PostCardState extends State<PostCard> {
   @override
   void didUpdateWidget(covariant PostCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Nếu dữ liệu được truyền vào thay đổi, hãy cập nhật lại state của PostCard
     if (widget.postData != oldWidget.postData) {
-      // print("PostCard [${widget.postData['id']}] didUpdateWidget!"); // Dùng để debug
       _updateStateFromWidget();
     }
   }
@@ -724,11 +689,9 @@ class _PostCardState extends State<PostCard> {
     _commentsCount = widget.postData['commentsCount'] ?? 0;
     _sharesCount = widget.postData['sharesCount'] ?? 0;
 
-    // SỬA Ở ĐÂY: Đọc từ 'likedBy' thay vì 'likes'
     final List<dynamic> likes = widget.postData['likedBy'] ?? [];
     _isLiked = _currentUser != null ? likes.contains(_currentUser!.uid) : false;
 
-    // SỬA Ở ĐÂY: Đọc từ 'savedBy' thay vì 'saves'
     final List<dynamic> saves = widget.postData['savedBy'] ?? [];
     _isSaved = _currentUser != null ? saves.contains(_currentUser!.uid) : false;
   }
@@ -747,8 +710,8 @@ class _PostCardState extends State<PostCard> {
     final userId = _currentUser!.uid;
     final postRef = _firestore.collection('posts').doc(_postId);
     final updateData = _isSaved
-        ? {'savedBy': FieldValue.arrayUnion([userId])} // <-- Sửa lại: Nếu isSaved là true -> Union
-        : {'savedBy': FieldValue.arrayRemove([userId])}; // <-- Ngược lại -> Remove
+        ? {'savedBy': FieldValue.arrayUnion([userId])}
+        : {'savedBy': FieldValue.arrayRemove([userId])};
     postRef.update(updateData).catchError((e) => print("Error updating save: $e"));
   }
 
@@ -784,7 +747,7 @@ class _PostCardState extends State<PostCard> {
           heightFactor: 0.95,
           child: CommentBottomSheetContent(
             postId: _postId,
-            postUserName: widget.postData['userName'] ?? 'Người dùng',
+            postUserName: widget.postData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
             currentCommentCount: _commentsCount,
             postMediaUrl: postMediaUrl,
             postCaption: widget.postData['postCaption'] ?? '',
@@ -809,7 +772,7 @@ class _PostCardState extends State<PostCard> {
       builder: (BuildContext sheetContext) {
         return ShareSheetContent(
           postId: _postId,
-          postUserName: widget.postData['userName'] ?? 'Người dùng',
+          postUserName: widget.postData['displayName'] ?? 'Người dùng', // SỬA Ở ĐÂY
           initialShares: _sharesCount,
           onSharesUpdated: (newCount) {
             if (mounted) setState(() { _sharesCount = newCount; });
@@ -846,7 +809,6 @@ class _PostCardState extends State<PostCard> {
         await _firestore.collection('posts').doc(_postId).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.')));
-          // DÒNG widget.onStateChange() ĐÃ ĐƯỢC XÓA HOÀN TOÀN
         }
       } catch (e) { /* Handle error */ }
     }
@@ -894,7 +856,6 @@ class _PostCardState extends State<PostCard> {
         if (value == 'delete') {
           _deletePost();
         }
-        // TODO: Handle other options
       },
       icon: const Icon(Icons.more_horiz, color: sonicSilver),
       color: darkSurface,
@@ -916,8 +877,8 @@ class _PostCardState extends State<PostCard> {
         children: [
           Icon(icon, color: color, size: 28),
           const SizedBox(width: 4),
-          if (count > 0) // <--- ĐÂY LÀ ĐIỀU KIỆN KIỂM TRA
-            Text( // <--- VÀ ĐÂY LÀ WIDGET HIỂN THỊ CON SỐ
+          if (count > 0)
+            Text(
               count.toString(),
               style: const TextStyle(color: sonicSilver, fontSize: 13, fontWeight: FontWeight.w500),
             ),
@@ -930,7 +891,7 @@ class _PostCardState extends State<PostCard> {
   Widget build(BuildContext context) {
     final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
     final String? imageUrl = widget.postData['imageUrl'] as String?;
-    final String userName = widget.postData['userName'] as String? ?? 'Người dùng';
+    final String userName = widget.postData['displayName'] as String? ?? 'Người dùng'; // SỬA Ở ĐÂY
     final String locationTime = widget.postData['locationTime'] as String? ?? '';
     final String tag = widget.postData['tag'] as String? ?? '';
     final String caption = widget.postData['postCaption'] as String? ?? '';
@@ -943,14 +904,10 @@ class _PostCardState extends State<PostCard> {
     return Container(
       margin: EdgeInsets.zero,
       padding: const EdgeInsets.only(bottom: 0),
-      // =======================================================
-      // THAY ĐỔI: Thêm màu nền đen cho PostCard để che đi khoảng trắng nếu có
-      // =======================================================
-      color: Colors.black, // Đặt nền đen cho card
+      color: Colors.black,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. Header
           Padding(
             padding: const EdgeInsets.only(left: 0.0, bottom: 12.0, right: 0.0, top: 10.0),
             child: Row(
@@ -977,20 +934,18 @@ class _PostCardState extends State<PostCard> {
                     ),
                   ),
                 ),
-                if (tag.isNotEmpty) /* ... Tag ... */
+                if (tag.isNotEmpty)
                   _buildMoreOptionsButton(context),
               ],
             ),
           ),
 
-          // 2. Caption
           if (caption.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
               child: Text(caption, style: const TextStyle(color: Colors.white, fontSize: 15)),
             ),
 
-          // 3. Ảnh bài viết
           GestureDetector(
             onDoubleTap: _toggleLike,
             onTap: () { /* Navigate to PostDetailScreen */ },
@@ -1008,7 +963,6 @@ class _PostCardState extends State<PostCard> {
             ),
           ),
 
-          // 4. Actions
           Padding(
             padding: const EdgeInsets.only(top: 10.0, left: 0.0, right: 0.0, bottom: 10.0),
             child: Column(
@@ -1046,4 +1000,4 @@ class _PostCardState extends State<PostCard> {
       ),
     );
   }
-} // End _PostCardState
+}

@@ -95,12 +95,14 @@ class _AddPostContentState extends State<AddPostContent> {
   }
 
   // SỬA Ở ĐÂY: THAY ĐỔI LOGIC ĐĂNG BÀI
+// SỬA Ở ĐÂY: THAY ĐỔI LOGIC ĐĂNG BÀI
   Future<void> _uploadPost() async {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      print("DEBUG: Lỗi - Người dùng hiện tại là null, không thể đăng bài.");
+      return;
+    }
 
-    // SỬA: Điều kiện kiểm tra mới
-    // Chỉ chặn khi không có ảnh VÀ không có chữ
     if (_selectedImage == null && _captionController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Vui lòng thêm ảnh hoặc viết nội dung để đăng bài.'),
@@ -111,24 +113,42 @@ class _AddPostContentState extends State<AddPostContent> {
 
     setState(() => _isLoading = true);
 
-    try {
-      String? imageUrl; // URL có thể là null nếu chỉ đăng chữ
+    // IN THÔNG TIN GỠ LỖI
+    print("--- BẮT ĐẦU GỠ LỖI ---");
+    print("DEBUG 1: Đang đăng bài cho UID: ${user.uid}");
 
-      // 1. Chỉ tải ảnh lên nếu có ảnh được chọn
+    try {
+      String? imageUrl;
+
       if (_selectedImage != null) {
-        // TODO: Tích hợp logic tải file lên Firebase Storage
-        // Ví dụ: imageUrl = await uploadFileToStorage(_selectedImage);
-        // Hiện tại dùng URL giả lập
         imageUrl = "https://picsum.photos/seed/${DateTime.now().millisecondsSinceEpoch}/800/800";
       }
 
-      // 2. Thêm dữ liệu bài viết vào Firestore
+      DocumentSnapshot userDoc = await _firestore.collection('users').doc(user.uid).get();
+      print("DEBUG 2: Tài liệu người dùng có tồn tại trong Firestore không? -> ${userDoc.exists}");
+
+      String displayName;
+      String? userAvatarUrl;
+
+      if (userDoc.exists && userDoc.data() != null) {
+        final userData = userDoc.data() as Map<String, dynamic>;
+        print("DEBUG 3: Dữ liệu lấy từ Firestore là: $userData");
+        displayName = userData['displayName'] ?? 'Người dùng Zink (Lỗi)';
+        userAvatarUrl = userData['photoURL'];
+      } else {
+        print("DEBUG 4: Không tìm thấy tài liệu Firestore. Lấy từ Auth. displayName của Auth là: ${user.displayName}");
+        displayName = user.displayName ?? 'Người dùng Zink';
+        userAvatarUrl = user.photoURL;
+      }
+
+      print("DEBUG 5: Tên hiển thị cuối cùng sẽ được lưu là: '$displayName'");
+
       await _firestore.collection('posts').add({
         'uid': user.uid,
-        'userName': user.displayName ?? 'Người dùng Zink',
-        'userAvatarUrl': user.photoURL,
+        'displayName': displayName,
+        'userAvatarUrl': userAvatarUrl,
         'postCaption': _captionController.text.trim(),
-        'imageUrl': imageUrl, // imageUrl có thể là null
+        'imageUrl': imageUrl,
         'timestamp': FieldValue.serverTimestamp(),
         'privacy': _privacy,
         'likesCount': 0,
@@ -138,6 +158,8 @@ class _AddPostContentState extends State<AddPostContent> {
         'savedBy': [],
       });
 
+      print("--- GỠ LỖI THÀNH CÔNG ---");
+
       widget.onPostUploaded();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đăng bài thành công!'), backgroundColor: Colors.green));
@@ -145,6 +167,8 @@ class _AddPostContentState extends State<AddPostContent> {
       }
 
     } catch (e) {
+      print("--- GỠ LỖI THẤT BẠI ---");
+      print("LỖI EXCEPTION: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: coralRed));
       }
@@ -154,7 +178,6 @@ class _AddPostContentState extends State<AddPostContent> {
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(

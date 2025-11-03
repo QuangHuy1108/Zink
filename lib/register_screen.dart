@@ -80,9 +80,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (user != null) {
         // 3. Tạo user doc trong Firestore
         await _firestore.collection('users').doc(user.uid).set({
-          'uid': user.uid, 'email': input, 'name': name, 'username': username,
+          'uid': user.uid, 'email': input, 'displayName': name, 'username': username,
           'nameLower': name.toLowerCase(), 'usernameLower': username.toLowerCase(),
-          'title': '', 'avatarUrl': null, 'coverImageUrl': null,
+          'title': '', 'photoURL': null, 'coverImageUrl': null,
           'createdAt': FieldValue.serverTimestamp(), 'phone': null,
           'followers': [], 'following': [], 'friendUids': [],
           'postsCount': 0, 'totalLikes': 0,

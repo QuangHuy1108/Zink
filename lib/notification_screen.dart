@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 // Import các màn hình/model cần thiết cho điều hướng
 // Đảm bảo các lớp giả định này tồn tại (hoặc được định nghĩa ở đây/đã import)
-class StoryViewScreen extends StatelessWidget { final String userName; final String avatarUrl; final List<String> storyIds; const StoryViewScreen({super.key, required this.userName, required this.avatarUrl, required this.storyIds}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Story View", content: "Xem story của $userName");}
+// Đã xóa StoryViewScreen
 class CommentBottomSheetContent extends StatelessWidget { final String postId; final String postUserName; final int currentCommentCount; final Function(int) onCommentPosted; final String postMediaUrl; final String postCaption; final bool isPostOwner; const CommentBottomSheetContent({super.key, required this.postId, required this.postUserName, required this.currentCommentCount, required this.onCommentPosted, required this.postMediaUrl, required this.postCaption, required this.isPostOwner}); @override Widget build(BuildContext context) => Container(color: Colors.grey, child: Text("Comment Sheet for $postId"));}
 class PostDetailScreen extends StatelessWidget { final Map<String, dynamic> postData; const PostDetailScreen({super.key, required this.postData}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Post Detail", content: "Xem chi tiết bài viết ${postData['id']}");}
 class ProfileScreen extends StatelessWidget { final String? targetUserId; final VoidCallback onNavigateToHome; final VoidCallback onLogout; const ProfileScreen({super.key, this.targetUserId, required this.onNavigateToHome, required this.onLogout}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Profile", content: "Xem profile của ${targetUserId ?? 'Bạn'}");}
@@ -422,15 +422,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết không còn tồn tại.');
         }
       } else if (['my_story_like', 'my_story_share', 'tag_story'].contains(type)) {
-        String avatarUrl = (type == 'tag_story')
-            ? (data['senderAvatarUrl'] ?? '')
-            : (_currentUser?.photoURL ?? '');
-
-        targetScreen = StoryViewScreen(
-          userName: (type == 'tag_story') ? senderName : (_currentUser?.displayName ?? 'Bạn'),
-          avatarUrl: avatarUrl,
-          storyIds: [],
-        );
+        targetScreen = const PlaceholderScreen(title: 'Không tìm thấy', content: 'Tính năng Story đã bị loại bỏ.');
       } else if (type == 'suggest_page') {
         targetScreen = PlaceholderScreen(title: 'Trang gợi ý', content: 'Xem chi tiết trang: $destinationId');
       } else {

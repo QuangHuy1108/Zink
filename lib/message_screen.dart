@@ -95,7 +95,7 @@ class _MessageScreenState extends State<MessageScreen> {
       _messageController.clear();
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
-           _scrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+          _scrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
         }
       });
     } catch (e) {
@@ -164,7 +164,7 @@ class _MessageScreenState extends State<MessageScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: topazColor));
         if (snapshot.hasError) return Center(child: Text('Lỗi tải tin nhắn: ${snapshot.error}', style: const TextStyle(color: coralRed)));
-        
+
         final messages = snapshot.data?.docs ?? [];
         if (messages.isEmpty) return Center(child: Text('Bắt đầu cuộc trò chuyện với ${widget.targetUserName ?? 'người này'}!', style: TextStyle(color: sonicSilver)));
 
@@ -196,7 +196,7 @@ class _MessageScreenState extends State<MessageScreen> {
         children: [
           Expanded(child: _buildChatBody()),
           // Chỉ hiển thị ô nhập liệu khi đang trong cuộc trò chuyện cụ thể
-          if (!isListView) 
+          if (!isListView)
             Container(
               padding: EdgeInsets.only(left: 16, right: 16, top: 8, bottom: MediaQuery.of(context).padding.bottom + 8),
               color: darkSurface.withOpacity(0.5),
@@ -251,7 +251,7 @@ class _ChatListItem extends StatelessWidget {
       future: _firestore.collection('users').doc(otherUserId).get(),
       builder: (context, userSnapshot) {
         if (!userSnapshot.hasData) return const ListTile(title: Text('Đang tải...', style: TextStyle(color: sonicSilver)));
-        
+
         final userData = userSnapshot.data!.data() as Map<String, dynamic>;
         final String targetUserName = userData['name'] ?? 'Người dùng';
         final String targetAvatarUrl = userData['avatarUrl'] ?? ''; // Giả sử có trường avatarUrl

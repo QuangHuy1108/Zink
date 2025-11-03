@@ -110,22 +110,35 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     try {
       final imageUrl = _displayImageUrl;
 
-      String userName;
-      if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
-        userName = currentUser.displayName!;
-      } else if (currentUser.email != null && currentUser.email!.isNotEmpty) {
-        userName = currentUser.email!.split('@').first;
+      // Lấy thông tin người dùng từ Firestore trước, sau đó fallback về Auth
+      DocumentSnapshot userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+
+      String displayName;
+      String? userAvatarUrl;
+
+      if (userDoc.exists && userDoc.data() != null) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          // Lấy từ Firestore, nếu null thì dùng giá trị mặc định tạm thời
+          displayName = userData['displayName'] ?? 'Người dùng';
+          userAvatarUrl = userData['photoURL'];
       } else {
-        userName = "Người dùng Zink";
+          // Nếu không có doc trên Firestore, fallback về Auth
+          if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
+            displayName = currentUser.displayName!;
+          } else if (currentUser.email != null && currentUser.email!.isNotEmpty) {
+            displayName = currentUser.email!.split('@').first;
+          } else {
+            displayName = 'Người dùng';
+          }
+          userAvatarUrl = currentUser.photoURL;
       }
 
-      final userNameLower = userName.toLowerCase(); // <--- TÍNH TOÁN VÀ LƯU TRỮ TRƯỜNG CẦN THIẾT
-      final userAvatarUrl = currentUser.photoURL;
+      final displayNameLower = displayName.toLowerCase();
 
       final newPostData = {
         'uid': currentUser.uid,
-        'userName': userName,
-        'userNameLower': userNameLower, // <--- ĐÃ THÊM: Dùng cho tìm kiếm
+        'displayName': displayName,
+        'displayNameLower': displayNameLower,
         'userAvatarUrl': userAvatarUrl,
         'tag': '#New', // TODO: Cho phép người dùng chọn Tag
         'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
@@ -308,28 +321,37 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               const SizedBox(height: 15),
               const SizedBox(height: 15),
               // Các tùy chọn nâng cao
-              _buildOptionTile(icon: Icons.location_on_outlined, title: 'Thêm vị trí', onTap: () { /* ... */ }),
-              const SizedBox(height: 10),
-              _buildOptionTile(icon: Icons.alternate_email_outlined, title: 'Gắn thẻ người khác', onTap: () { /* ... */ }),
-              const SizedBox(height: 10),
-              _buildOptionTile(icon: Icons.sell_outlined, title: 'Thêm chủ đề (Tag)', onTap: () { /* ... */ }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+              _buildOptionTile(icon: Icons.location_on_outlined, title: 'Thêm vị trí', onTap: () {
+// TODO: Implement location picking
+ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chức năng chưa có.')));
+}),
+_buildOptionTile(icon: Icons.alternate_email_outlined, title: 'Gắn thẻ bạn bè', onTap: () {
+// TODO: Implement user tagging
+ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chức năng chưa có.')));
+}),
+],
+),
+),
+),
+);
+}
 
-  // Helper widget để tạo các ListTile tùy chọn (Giữ nguyên)
-  Widget _buildOptionTile({required IconData icon, required String title, required VoidCallback onTap}) {
-    return ListTile(
-      leading: Icon(icon, color: sonicSilver),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 16)),
-      trailing: const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
-      tileColor: darkSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      onTap: onTap,
-    );
-  }
+// Helper widget cho các tùy chọn
+Widget _buildOptionTile({required IconData icon, required String title, required VoidCallback onTap}) {
+return InkWell(
+onTap: onTap,
+child: Padding(
+padding: const EdgeInsets.symmetric(vertical: 12.0),
+child: Row(
+children: [
+Icon(icon, color: sonicSilver, size: 24),
+const SizedBox(width: 15),
+Text(title, style: const TextStyle(color: Colors.white, fontSize: 16)),
+const Spacer(),
+const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
+],
+),
+),
+);
+}
 }
