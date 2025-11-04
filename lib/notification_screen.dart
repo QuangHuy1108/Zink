@@ -2,13 +2,13 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'post_detail_screen.dart';
+import 'profile_screen.dart' hide PostDetailScreen, Comment;
 
 // Import các màn hình/model cần thiết cho điều hướng
 // Đảm bảo các lớp giả định này tồn tại (hoặc được định nghĩa ở đây/đã import)
 // Đã xóa StoryViewScreen
 class CommentBottomSheetContent extends StatelessWidget { final String postId; final String postUserName; final int currentCommentCount; final Function(int) onCommentPosted; final String postMediaUrl; final String postCaption; final bool isPostOwner; const CommentBottomSheetContent({super.key, required this.postId, required this.postUserName, required this.currentCommentCount, required this.onCommentPosted, required this.postMediaUrl, required this.postCaption, required this.isPostOwner}); @override Widget build(BuildContext context) => Container(color: Colors.grey, child: Text("Comment Sheet for $postId"));}
-class PostDetailScreen extends StatelessWidget { final Map<String, dynamic> postData; const PostDetailScreen({super.key, required this.postData}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Post Detail", content: "Xem chi tiết bài viết ${postData['id']}");}
-class ProfileScreen extends StatelessWidget { final String? targetUserId; final VoidCallback onNavigateToHome; final VoidCallback onLogout; const ProfileScreen({super.key, this.targetUserId, required this.onNavigateToHome, required this.onLogout}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Profile", content: "Xem profile của ${targetUserId ?? 'Bạn'}");}
 class Comment { final String id; final String userId; final String userName; final String? userAvatarUrl; final String text; final Timestamp timestamp; final String? parentId; bool isLiked; int likesCount; final List<String> likedBy; Comment({required this.id, required this.userId, required this.userName, this.userAvatarUrl, required this.text, required this.timestamp, this.parentId, this.isLiked = false, required this.likesCount, required this.likedBy}); factory Comment.fromFirestore(DocumentSnapshot doc, String currentUserId) => Comment(id: doc.id, userId: '', userName: '', text: '', timestamp: Timestamp.now(), likesCount: 0, likedBy: []);}
 
 // Constants
@@ -158,6 +158,7 @@ class SocialNotificationTile extends StatelessWidget {
 
   @override
   @override
+  @override
   Widget build(BuildContext context) {
     final data = notificationDoc.data() as Map<String, dynamic>? ?? {};
     final String type = data['type'] as String? ?? '';
@@ -168,7 +169,6 @@ class SocialNotificationTile extends StatelessWidget {
 
     final ImageProvider? avatarProvider = _getAvatarProvider(data);
 
-    // SỬA Ở ĐÂY: Tạo văn bản thông báo theo loại
     String actionText;
     switch (type) {
       case 'follow':
@@ -182,8 +182,9 @@ class SocialNotificationTile extends StatelessWidget {
         break;
     }
 
+    // SỬA Ở ĐÂY: Cho phép bấm vào cả thông báo 'follow'
     void handleListTileTap() {
-      if (type != 'friend_request' && type != 'follow') {
+      if (type != 'friend_request') {
         onTileTap(notificationDoc);
       }
     }
@@ -232,7 +233,7 @@ class SocialNotificationTile extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 15),
               children: <TextSpan>[
                 TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                TextSpan(text: ' $actionText'), // Dùng actionText đã tạo
+                TextSpan(text: ' $actionText'),
               ],
             ),
           ),
@@ -425,55 +426,62 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
     final destinationId = data['destinationId'] as String?;
     final type = data['type'] as String?;
-    final senderName = data['senderName'] as String? ?? 'Người dùng';
 
-    final currentUserId = _currentUser?.uid;
-
-    if (destinationId == null || type == null) { /* Show error */ return; }
+    // Đánh dấu đã đọc ngay khi bấm vào
+    _markSingleNotificationAsRead(notifDoc);
 
     Widget? targetScreen;
     try {
-      if (['like', 'comment', 'tag_post', /*...*/ 'tag_comment'].contains(type)) {
-        final postDoc = await _firestore.collection('posts').doc(destinationId).get();
-        if (postDoc.exists) {
-          Map<String, dynamic> postData = postDoc.data()!;
-          postData['id'] = postDoc.id;
-
-          final List<String> likedByList = List<String>.from(postData['likedBy'] ?? []);
-          final List<String> savedByList = List<String>.from(postData['savedBy'] ?? []);
-          postData['isLiked'] = currentUserId != null && likedByList.contains(currentUserId);
-          postData['isSaved'] = currentUserId != null && savedByList.contains(currentUserId);
-
-          postData['userAvatarUrl'] = postData['userAvatarUrl'];
-          postData['imageUrl'] = postData['imageUrl'];
-          postData['locationTime'] = (postData['timestamp'] as Timestamp?) != null ? _formatTimestampAgo(postData['timestamp']!) : '';
-
-          if (type == 'comment' || type == 'tag_comment') {
-            _showCommentSheetForPost(context, postData);
-            _markSingleNotificationAsRead(notifDoc);
-            return;
-          } else {
-            targetScreen = PostDetailScreen(postData: postData);
-          }
+      // --- TRƯỜNG HỢP 1: ĐI ĐẾN BÀI VIẾT ---
+      if (['like', 'comment', 'share', 'save', 'tag_post', 'tag_comment'].contains(type)) {
+        if (destinationId == null) {
+          targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID của bài viết.');
         } else {
-          targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết không còn tồn tại.');
+          final postDoc = await _firestore.collection('posts').doc(destinationId).get();
+          if (postDoc.exists) {
+            Map<String, dynamic> postData = postDoc.data()!;
+            postData['id'] = postDoc.id;
+            // (Thêm các dữ liệu cần thiết khác cho PostDetailScreen nếu cần)
+            targetScreen = PostDetailScreen(postData: postData);
+          } else {
+            targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết này không còn tồn tại.');
+          }
         }
-      } else if (['my_story_like', 'my_story_share', 'tag_story'].contains(type)) {
-        targetScreen = const PlaceholderScreen(title: 'Không tìm thấy', content: 'Tính năng Story đã bị loại bỏ.');
-      } else if (type == 'suggest_page') {
-        targetScreen = PlaceholderScreen(title: 'Trang gợi ý', content: 'Xem chi tiết trang: $destinationId');
-      } else {
-        targetScreen = PlaceholderScreen(title: 'Chi tiết thông báo', content: 'Đích đến: $destinationId');
+      } 
+      // --- TRƯỜNG HỢP 2: ĐI ĐẾN TRANG CÁ NHÂN ---
+      else if (['follow', 'friend_accept'].contains(type)) {
+        final senderId = data['senderId'] as String?;
+        if (senderId != null) {
+          targetScreen = ProfileScreen(
+            targetUserId: senderId,
+            onNavigateToHome: () {},
+            onLogout: () {},
+          );
+        } else {
+           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy người dùng này.');
+        }
+      } 
+      // --- CÁC TRƯỜNG HỢP KHÁC ---
+      else {
+        // Bạn có thể thêm các trường hợp khác ở đây, ví dụ: đi đến Story, trang Page, ...
+        // Hiện tại sẽ không làm gì để tránh lỗi không mong muốn
+        print("Chưa xử lý điều hướng cho loại thông báo: $type");
+        return; 
       }
+
+      // Điều hướng nếu có màn hình đích
       if (targetScreen != null && mounted) {
-        Navigator.push(context, MaterialPageRoute(builder: (context) => targetScreen!))
-            .then((_) => _markSingleNotificationAsRead(notifDoc));
+        Navigator.push(context, MaterialPageRoute(builder: (context) => targetScreen!));
       }
-    } catch (e) { print("Lỗi xử lý thông báo tap: $e"); /* Handle error */ }
+    } catch (e) {
+      print("Lỗi xử lý thông báo tap: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã có lỗi xảy ra khi mở thông báo.'), backgroundColor: coralRed));
+      }
+    }
   }
 
 
-  @override
   @override
   @override
   Widget build(BuildContext context) {
@@ -496,9 +504,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           splashRadius: 28,
         ),
         title: const Text('Thông báo', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 20)),
-        backgroundColor: Colors.black,
-        elevation: 0.5,
-        shadowColor: darkSurface,
+        backgroundColor: Colors.black, elevation: 0.5, shadowColor: darkSurface,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: StreamBuilder<QuerySnapshot>(
@@ -524,6 +530,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final data = notifDoc.data() as Map<String, dynamic>? ?? {};
               final type = data['type'] as String? ?? '';
 
+              // SỬA Ở ĐÂY: Chỉ dùng SocialNotificationTile cho friend_request
               if (type == 'friend_request') {
                 return SocialNotificationTile(
                   notificationDoc: notifDoc,
@@ -539,9 +546,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 final bool isRead = data['isRead'] ?? false;
                 final ImageProvider? avatarProvider = _getAvatarProvider(data);
 
-                // TẠO VĂN BẢN THÔNG BÁO THEO LOẠI
+                // SỬA Ở ĐÂY: Thêm case cho 'share' và 'save'
                 String actionText;
-                switch (type) {
+                switch(type) {
                   case 'like':
                     actionText = 'đã thích bài viết của bạn.';
                     break;
@@ -550,21 +557,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     actionText = 'đã bình luận: "${commentPreview.length > 50 ? '${commentPreview.substring(0, 50)}...' : commentPreview}"';
                     break;
                   case 'friend_accept':
-                    actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
-                    break;
+                     actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
+                     break;
                   case 'share': // THÊM MỚI
-                    actionText = 'đã chia sẻ bài viết của bạn.';
-                    break;
+                     actionText = 'đã chia sẻ bài viết của bạn.';
+                     break;
                   case 'save': // THÊM MỚI
-                    actionText = 'đã lưu bài viết của bạn.';
-                    break;
+                     actionText = 'đã lưu bài viết của bạn.';
+                     break;
                   case 'follow':
-                    actionText = 'đã bắt đầu theo dõi bạn.';
-                    break;
+                     actionText = 'đã bắt đầu theo dõi bạn.';
+                     break;
                   default:
-                    actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
+                     actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
                 }
-
+                
                 return GestureDetector(
                   onLongPress: () => _showNotificationMenu(notifDoc),
                   child: Container(
@@ -572,9 +579,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     child: ListTile(
                       onTap: () => _handleTap(notifDoc),
                       leading: CircleAvatar(
-                        radius: 24,
-                        backgroundColor: darkSurface,
-                        backgroundImage: avatarProvider,
+                        radius: 24, backgroundColor: darkSurface, backgroundImage: avatarProvider,
                         child: avatarProvider == null ? const Icon(Icons.person_outline, color: sonicSilver) : null,
                       ),
                       title: RichText(
