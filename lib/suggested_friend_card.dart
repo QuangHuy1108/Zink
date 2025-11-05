@@ -18,11 +18,13 @@ const Color coralRed = Color(0xFFFD402C); // Dùng cho lỗi
 class SuggestedFriendCard extends StatefulWidget {
   final Map<String, dynamic> friendData;
   final VoidCallback onStateChange;
+  final Stream<DocumentSnapshot>? myUserDataStream;
 
   const SuggestedFriendCard({
     super.key,
     required this.friendData,
     required this.onStateChange,
+    required this.myUserDataStream,
   });
 
   @override
@@ -34,42 +36,20 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   User? _currentUser;
 
-  bool _isPending = false;
+  // Chỉ cần biến isLoading cho các hành động
   bool _isLoading = false;
-  bool _isFollowing = false; // Thêm biến trạng thái mới
 
   @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _checkInitialRequestStatus();
+    // Không cần _checkInitialRequestStatus() nữa
   }
 
-  // --- Logic kiểm tra, gửi/hủy request, điều hướng ---
-  Future<void> _checkInitialRequestStatus() async {
-    if (_currentUser == null) return;
-    final myUserDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
-    if (!myUserDoc.exists) return;
-
-    final myData = myUserDoc.data() as Map<String, dynamic>;
-    final targetUserId = widget.friendData['uid'] as String?;
-    if (targetUserId == null) return;
-
-    final outgoingRequests = List<String>.from(myData['outgoingRequests'] ?? []);
-    final following = List<String>.from(myData['following'] ?? []);
-
-    if (mounted) {
-      setState(() {
-        _isPending = outgoingRequests.contains(targetUserId);
-        _isFollowing = following.contains(targetUserId);
-      });
-    }
-  }
-
-  void _toggleFriendRequest() async {
+  // --- Logic gửi/hủy request, đã được tối ưu một chút ---
+  void _toggleFriendRequest(bool isCurrentlyPending) async {
     final currentUser = _currentUser;
     final targetUserId = widget.friendData['uid'] as String?;
-    final targetUserName = widget.friendData['displayName'] as String? ?? 'Người dùng';
 
     if (currentUser == null || targetUserId == null || _isLoading) return;
     if (mounted) setState(() => _isLoading = true);
@@ -78,7 +58,7 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
     final targetNotificationRef = _firestore.collection('users').doc(targetUserId).collection('notifications');
 
     try {
-      if (_isPending) { // Hủy lời mời
+      if (isCurrentlyPending) { // Hủy lời mời
         await userRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
         final notificationQuery = await targetNotificationRef
             .where('type', isEqualTo: 'friend_request')
@@ -88,7 +68,6 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         for (var doc in notificationQuery.docs) {
           await doc.reference.delete();
         }
-        if (mounted) setState(() => _isPending = false);
       } else { // Gửi lời mời
         DocumentSnapshot myUserDoc = await userRef.get();
         String senderName = 'Người dùng Zink';
@@ -110,21 +89,17 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
           'isRead': false,
           'actionTaken': false,
         });
-
-        if (mounted) setState(() => _isPending = true);
       }
     } catch (e) {
       print("Error toggling friend request: $e");
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
-        widget.onStateChange();
       }
     }
   }
 
-  // Hàm mới để xử lý Theo dõi/Hủy theo dõi
-  void _toggleFollow() async {
+  void _toggleFollow(bool isCurrentlyFollowing) async {
     final currentUser = _currentUser;
     final targetUserId = widget.friendData['uid'] as String?;
 
@@ -136,7 +111,7 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
     final WriteBatch batch = _firestore.batch();
 
     try {
-      if (_isFollowing) { // Hủy theo dõi
+      if (isCurrentlyFollowing) { // Hủy theo dõi
         batch.update(myDocRef, {'following': FieldValue.arrayRemove([targetUserId])});
         batch.update(theirDocRef, {'followers': FieldValue.arrayRemove([currentUser.uid])});
       } else { // Theo dõi
@@ -152,7 +127,6 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         batch.update(myDocRef, {'following': FieldValue.arrayUnion([targetUserId])});
         batch.update(theirDocRef, {'followers': FieldValue.arrayUnion([currentUser.uid])});
 
-        // Tạo thông báo theo dõi
         final notificationRef = theirDocRef.collection('notifications').doc();
         batch.set(notificationRef, {
           'type': 'follow',
@@ -164,15 +138,11 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         });
       }
       await batch.commit();
-      if (mounted) {
-        setState(() { _isFollowing = !_isFollowing; });
-      }
-    } catch(e) {
+    } catch (e) {
       print("Error toggling follow: $e");
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
-        widget.onStateChange();
       }
     }
   }
@@ -191,15 +161,18 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Các thông tin không đổi của người được gợi ý
     final String friendName = widget.friendData['displayName'] as String? ?? 'Người dùng';
     final int mutualCount = widget.friendData['mutual'] as int? ?? 0;
     final String friendMutualText = mutualCount > 0 ? '$mutualCount bạn chung' : 'Chưa có bạn chung';
     final String? friendAvatarUrl = widget.friendData['photoURL'] as String?;
+    final targetUserId = widget.friendData['uid'] as String?;
 
     final ImageProvider? avatarProvider = (friendAvatarUrl != null && friendAvatarUrl.isNotEmpty && friendAvatarUrl.startsWith('http'))
         ? NetworkImage(friendAvatarUrl)
         : null;
 
+    // Phần UI không đổi
     Widget userInfoSection = GestureDetector(
       onTap: () => _navigateToProfile(context),
       child: Column(
@@ -226,18 +199,6 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
       ),
     );
 
-    // Logic cho nút Kết bạn
-    final friendButtonText = _isPending ? 'Hủy lời mời' : 'Kết bạn';
-    final friendButtonColor = _isPending ? darkSurface : topazColor;
-    final friendTextColor = _isPending ? sonicSilver : Colors.black;
-    final friendButtonSide = _isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
-
-    // Logic cho nút Theo dõi
-    final followButtonText = _isFollowing ? 'Hủy theo dõi' : 'Theo dõi';
-    final followButtonColor = _isFollowing ? darkSurface : Colors.blueAccent;
-    final followTextColor = _isFollowing ? sonicSilver : Colors.white;
-    final followButtonSide = _isFollowing ? BorderSide(color: sonicSilver) : BorderSide.none;
-
     return Container(
       width: 150,
       margin: const EdgeInsets.only(right: 12),
@@ -246,42 +207,69 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Expanded(child: userInfoSection),
+          // Bọc các nút bấm trong StreamBuilder
           Padding(
             padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 32,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _toggleFriendRequest,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: friendButtonColor,
-                      foregroundColor: friendTextColor,
-                      side: friendButtonSide,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: StreamBuilder<DocumentSnapshot>(
+              stream: widget.myUserDataStream,
+              builder: (context, myDataSnapshot) {
+
+                // --- Xác định trạng thái từ Stream ---
+                bool isPending = false;
+                bool isFollowing = false;
+                if (myDataSnapshot.hasData && myDataSnapshot.data!.exists) {
+                  final myData = myDataSnapshot.data!.data() as Map<String, dynamic>;
+                  isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(targetUserId);
+                  isFollowing = (myData['following'] as List<dynamic>? ?? []).contains(targetUserId);
+                }
+
+                // --- Tạo kiểu cho các nút dựa trên trạng thái ---
+                final friendButtonText = isPending ? 'Hủy lời mời' : 'Kết bạn';
+                final friendButtonColor = isPending ? darkSurface : topazColor;
+                final friendTextColor = isPending ? sonicSilver : Colors.black;
+                final friendButtonSide = isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+                final followButtonText = isFollowing ? 'Hủy theo dõi' : 'Theo dõi';
+                final followButtonColor = isFollowing ? darkSurface : Colors.blueAccent;
+                final followTextColor = isFollowing ? sonicSilver : Colors.white;
+                final followButtonSide = isFollowing ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+                return Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      height: 32,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : () => _toggleFriendRequest(isPending),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: friendButtonColor,
+                          foregroundColor: friendTextColor,
+                          side: friendButtonSide,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        child: _isLoading ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)) : Text(friendButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
                     ),
-                    child: _isLoading ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)) : Text(friendButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  height: 32,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _toggleFollow,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: followButtonColor,
-                      foregroundColor: followTextColor,
-                      side: followButtonSide,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 32,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : () => _toggleFollow(isFollowing),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: followButtonColor,
+                          foregroundColor: followTextColor,
+                          side: followButtonSide,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        child: _isLoading ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)) : Text(followButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
                     ),
-                    child: _isLoading ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)) : Text(followButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ],

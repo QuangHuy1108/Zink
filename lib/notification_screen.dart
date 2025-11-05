@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'post_detail_screen.dart';
 import 'profile_screen.dart' hide PostDetailScreen, Comment;
+import 'package:flutter/gestures.dart';
 
 // Import các màn hình/model cần thiết cho điều hướng
 // Đảm bảo các lớp giả định này tồn tại (hoặc được định nghĩa ở đây/đã import)
@@ -159,6 +160,8 @@ class SocialNotificationTile extends StatelessWidget {
   @override
   @override
   @override
+  // TÌM VÀ THAY THẾ TOÀN BỘ HÀM NÀY
+  @override
   Widget build(BuildContext context) {
     final data = notificationDoc.data() as Map<String, dynamic>? ?? {};
     final String type = data['type'] as String? ?? '';
@@ -182,7 +185,6 @@ class SocialNotificationTile extends StatelessWidget {
         break;
     }
 
-    // SỬA Ở ĐÂY: Cho phép bấm vào cả thông báo 'follow'
     void handleListTileTap() {
       if (type != 'friend_request') {
         onTileTap(notificationDoc);
@@ -232,7 +234,12 @@ class SocialNotificationTile extends StatelessWidget {
             text: TextSpan(
               style: const TextStyle(color: Colors.white, fontSize: 15),
               children: <TextSpan>[
-                TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                // SỬA Ở ĐÂY: Thêm TapGestureRecognizer
+                TextSpan(
+                  text: senderName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  recognizer: TapGestureRecognizer()..onTap = () => onUserTap(notificationDoc),
+                ),
                 TextSpan(text: ' $actionText'),
               ],
             ),
@@ -243,8 +250,7 @@ class SocialNotificationTile extends StatelessWidget {
         ),
       ),
     );
-  }
-}
+  }}
 
 // =======================================================
 // MÀN HÌNH CHÍNH: NotificationScreen (ĐÃ SỬA LỖI SCOPE)
@@ -420,8 +426,25 @@ class _NotificationScreenState extends State<NotificationScreen> {
       print("Lỗi xử lý yêu cầu kết bạn: $e");
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Xử lý yêu cầu không thành công.'), backgroundColor: coralRed));
     }
-  }  void _handleProfileTap(DocumentSnapshot notifDoc) { /* ... */ }
-
+  }
+  // TÌM VÀ THAY THẾ HÀM NÀY
+  void _handleProfileTap(DocumentSnapshot notifDoc) {
+    final data = notifDoc.data() as Map<String, dynamic>? ?? {};
+    final senderId = data['senderId'] as String?;
+    if (senderId != null && mounted) {
+      // Điều hướng đến ProfileScreen
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ProfileScreen(
+            targetUserId: senderId,
+            onNavigateToHome: () {},
+            onLogout: () {},
+          ),
+        ),
+      );
+    }
+  }
   void _handleTap(DocumentSnapshot notifDoc) async {
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
     final destinationId = data['destinationId'] as String?;
@@ -571,7 +594,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   default:
                      actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
                 }
-                
+
                 return GestureDetector(
                   onLongPress: () => _showNotificationMenu(notifDoc),
                   child: Container(

@@ -48,11 +48,27 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // --- XỬ LÝ ĐĂNG NHẬP BẰNG EMAIL/PASSWORD ONLY ---
     try {
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
           email: input, password: password);
-      if (userCredential.user != null) {
+      User? user = userCredential.user;
+
+      if (user != null) {
+        // START: Đồng bộ displayName từ Auth sang Firestore nếu cần
+        final userDocRef = _firestore.collection('users').doc(user.uid);
+        final userDoc = await userDocRef.get();
+
+        // Kiểm tra xem Auth profile có displayName không, và Firestore có bị thiếu không
+        if (user.displayName != null && user.displayName!.isNotEmpty) {
+          if (!userDoc.exists || userDoc.data()?['displayName'] == null) {
+            // Cập nhật hoặc tạo mới document với displayName, merge:true để không ghi đè dữ liệu khác
+            await userDocRef.set({
+              'displayName': user.displayName,
+            }, SetOptions(merge: true));
+          }
+        }
+        // END: Đồng bộ
+
         await SessionManager().createLoginSession();
         if (mounted) {
           Navigator.of(context).pushReplacement(

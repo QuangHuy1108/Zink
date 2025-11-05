@@ -86,6 +86,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   // --- HÀM BUILD COMMENT ITEM (Cập nhật Avatar) ---
+  // --- HÀM BUILD COMMENT ITEM (ĐÃ SỬA PADDING) ---
   Widget _buildCommentItem(Comment comment) {
     final bool isMyComment = comment.userId == _currentUser?.uid;
 
@@ -94,8 +95,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         ? NetworkImage(avatarUrl)
         : null;
 
+    // SỬA: Bỏ padding ngang ở đây
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+      padding: const EdgeInsets.symmetric(vertical: 12.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -146,12 +148,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               ],
             ),
           ),
-          // Nút like cho comment có thể thêm ở đây nếu cần
         ],
       ),
     );
   }
-
   // --- HÀM FORMAT TIMESTAMP (Giữ nguyên) ---
   String _formatTimestampAgo(Timestamp timestamp) {
     final now = DateTime.now();
@@ -165,96 +165,100 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   @override
   @override
   @override
-  Widget build(BuildContext context) {    final String postUserName = widget.postData['displayName'] ?? 'Bài viết';
+  @override
+  Widget build(BuildContext context) {
+    final String postUserName = widget.postData['displayName'] ?? 'Bài viết';
 
-  return Scaffold(
-    backgroundColor: Colors.black,
-    appBar: AppBar(
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
-        onPressed: () => Navigator.of(context).pop(),
-        splashRadius: 28,
+    return Scaffold(      backgroundColor: Colors.black,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          onPressed: () => Navigator.of(context).pop(),
+          splashRadius: 28,
+        ),
+        title: Text('Bài viết của $postUserName', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        backgroundColor: Colors.black,
+        elevation: 0.5,
+        shadowColor: darkSurface,
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
-      title: Text('Bài viết của $postUserName', style: const TextStyle(color: Colors.white, fontSize: 18)),
-      backgroundColor: Colors.black,
-      elevation: 0.5,
-      shadowColor: darkSurface,
-      iconTheme: const IconThemeData(color: Colors.white),
-    ),
-    body: SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 1. HIỂN THỊ POSTCARD CHI TIẾT (ĐÃ SỬA)
-          PostCard(
-            postData: widget.postData,
-            // XÓA BỎ onStateChange ở đây
-          ),
-          const Divider(color: darkSurface, height: 1, thickness: 1),
+      body: SingleChildScrollView(
+        // SỬA: Bọc toàn bộ nội dung trong một Padding chung
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. PostCard giờ sẽ được căn chỉnh đúng
+              PostCard(
+                postData: widget.postData,
+              ),
+              const Divider(color: darkSurface, height: 1, thickness: 1),
 
-          // 2. TIÊU ĐỀ PHẦN BÌNH LUẬN
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-            child: Text(
-              'Bình luận',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-          ),
-
-          // 3. HIỂN THỊ DANH SÁCH BÌNH LUẬN
-          if (_postId.isNotEmpty)
-            StreamBuilder<QuerySnapshot>(
-              stream: _firestore.collection('posts').doc(_postId).collection('comments')
-                  .orderBy('timestamp', descending: false)
-                  .limit(20)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: topazColor)));
-                }
-                if (snapshot.hasError) {
-                  return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Lỗi tải bình luận.', style: TextStyle(color: sonicSilver))));
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Chưa có bình luận nào.', style: TextStyle(color: sonicSilver))));
-                }
-
-                final commentDocs = snapshot.data!.docs;
-                final currentUserId = _currentUser?.uid ?? '';
-
-                return ListView.builder(
-                  physics: const NeverScrollableScrollPhysics(),
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.only(bottom: 20),
-                  itemCount: commentDocs.length,
-                  itemBuilder: (context, index) {
-                    try {
-                      final comment = Comment.fromFirestore(commentDocs[index], currentUserId);
-                      return _buildCommentItem(comment);
-                    } catch (e) {
-                      print("Lỗi parse comment: $e");
-                      return const SizedBox.shrink();
-                    }
-                  },
-                );
-              },
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(
+              // 2. Tiêu đề "Bình luận"
+              const Padding(
+                // SỬA: Bỏ padding ngang ở đây vì đã có padding chung
+                padding: EdgeInsets.symmetric(vertical: 12.0),
                 child: Text(
-                  'Lỗi: Không thể tải bình luận (Thiếu ID bài viết).',
-                  style: TextStyle(color: sonicSilver, fontSize: 14),
-                  textAlign: TextAlign.center,
+                  'Bình luận',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ),
-            ),
 
-          const SizedBox(height: 50), // Padding dưới cùng
-        ],
+              // 3. Danh sách bình luận
+              if (_postId.isNotEmpty)
+                StreamBuilder<QuerySnapshot>(
+                  stream: _firestore.collection('posts').doc(_postId).collection('comments')
+                      .orderBy('timestamp', descending: false)
+                      .limit(20)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: topazColor)));
+                    }
+                    if (snapshot.hasError) {
+                      return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Lỗi tải bình luận.', style: TextStyle(color: sonicSilver))));
+                    }
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      return const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Chưa có bình luận nào.', style: TextStyle(color: sonicSilver))));
+                    }
+
+                    final commentDocs = snapshot.data!.docs;
+                    final currentUserId = _currentUser?.uid ?? '';
+
+                    return ListView.builder(
+                      physics: const NeverScrollableScrollPhysics(),
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 20),
+                      itemCount: commentDocs.length,
+                      itemBuilder: (context, index) {
+                        try {
+                          final comment = Comment.fromFirestore(commentDocs[index], currentUserId);
+                          return _buildCommentItem(comment);
+                        } catch (e) {
+                          print("Lỗi parse comment: $e");
+                          return const SizedBox.shrink();
+                        }
+                      },
+                    );
+                  },
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Center(
+                    child: Text(
+                      'Lỗi: Không thể tải bình luận (Thiếu ID bài viết).',
+                      style: TextStyle(color: sonicSilver, fontSize: 14),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 50), // Padding dưới cùng
+            ],
+          ),
+        ),
       ),
-    ),
-  );
-  }
-}
+    );
+  }}

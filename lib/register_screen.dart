@@ -20,8 +20,8 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _emailOrPhoneController = TextEditingController();
-  final TextEditingController _nameController = TextEditingController(); // THÊM: Họ và tên
-  final TextEditingController _usernameController = TextEditingController(); // THÊM: Tên đăng nhập
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
 
@@ -32,9 +32,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isLoading = false;
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  bool _isEmailSelected = true; // Giữ lại nhưng không dùng trong UI
 
-  // Hàm thực hiện đăng ký (Chỉ Email/Password)
   void _performRegistration() async {
     FocusScope.of(context).unfocus();
     setState(() { _errorMessage = null; _isLoading = true; });
@@ -62,9 +60,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // ---- XỬ LÝ ĐĂNG KÝ BẰNG EMAIL/PASSWORD ONLY ----
     try {
-      // 1. Kiểm tra username đã tồn tại chưa
       final existingUsername = await _firestore.collection('users')
           .where('usernameLower', isEqualTo: username.toLowerCase())
           .limit(1)
@@ -74,29 +70,60 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      // 2. Tạo User qua Firebase Auth
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(email: input, password: password);
       User? user = userCredential.user;
+
       if (user != null) {
-        // 3. Tạo user doc trong Firestore
-        await _firestore.collection('users').doc(user.uid).set({
-          'uid': user.uid, 'email': input, 'displayName': name, 'username': username,
-          'nameLower': name.toLowerCase(), 'usernameLower': username.toLowerCase(),
-          'title': '', 'photoURL': null, 'coverImageUrl': null,
-          'createdAt': FieldValue.serverTimestamp(), 'phone': null,
-          'followers': [], 'following': [], 'friendUids': [],
-          'postsCount': 0, 'totalLikes': 0,
-        });
+        // --- START: ROBUST SEQUENTIAL REGISTRATION LOGIC ---
+        // 1. Update Auth profile and WAIT for it to complete.
         await user.updateDisplayName(name);
+
+        // 2. Reload the user state from the backend to ensure the local instance is up-to-date.
+        await user.reload();
+
+        // 3. Get the freshest instance of the user.
+        User? freshUser = _auth.currentUser;
+
+        if (freshUser != null) {
+            // 4. Write to Firestore using the reloaded, guaranteed-fresh data.
+            await _firestore.collection('users').doc(freshUser.uid).set({
+              'uid': freshUser.uid,
+              'email': freshUser.email,
+              'displayName': freshUser.displayName, // Use the fresh data from Auth
+              'photoURL': freshUser.photoURL,
+              'username': username,
+              'nameLower': name.toLowerCase(),
+              'usernameLower': username.toLowerCase(),
+              'title': '',
+              'coverImageUrl': null,
+              'createdAt': FieldValue.serverTimestamp(),
+              'phone': null,
+              'followers': [],
+              'following': [],
+              'friendUids': [],
+              'postsCount': 0,
+              'totalLikes': 0,
+            });
+        } else {
+            // This case is highly unlikely but a good safeguard.
+            throw Exception("Failed to get fresh user instance after reload.");
+        }
+        // --- END: ROBUST SEQUENTIAL REGISTRATION LOGIC ---
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tạo tài khoản thành công! Vui lòng đăng nhập.'), backgroundColor: activeGreen));
           Navigator.pop(context);
-          return;
         }
-      } else { throw FirebaseAuthException(code: 'null-user', message: 'Không thể tạo người dùng.'); }
+      } else {
+        throw FirebaseAuthException(code: 'null-user', message: 'Không thể tạo người dùng.');
+      }
     } on FirebaseAuthException catch (e) {
-      String friendlyErrorMessage = 'Đã xảy ra lỗi khi đăng ký. Vui lòng thử lại.';
+      String friendlyErrorMessage;
+      if (e.code == 'email-already-in-use') {
+        friendlyErrorMessage = 'Địa chỉ email này đã được sử dụng.';
+      } else {
+        friendlyErrorMessage = 'Đã xảy ra lỗi khi đăng ký. Vui lòng thử lại.';
+      }
       setState(() { _errorMessage = friendlyErrorMessage; });
     } catch (e) {
       print("Register Error: $e");
@@ -116,8 +143,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  // Các methods helper bị xóa
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -128,7 +153,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Nút Back
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton(
@@ -138,17 +162,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // Tiêu đề
               const Text('Tạo tài khoản', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Colors.white)),
               const SizedBox(height: 8),
               Text('Nhập thông tin cá nhân của bạn', style: TextStyle(fontSize: 16, color: sonicSilver.withOpacity(0.8))),
               const SizedBox(height: 30),
-
-              // 1. INPUT TOGGLE (ĐÃ XÓA)
-              const SizedBox(height: 25), // Khoảng cách thay cho toggle
-
-              // HỌ VÀ TÊN
+              const SizedBox(height: 25),
               TextField(
                 controller: _nameController,
                 decoration: InputDecoration(
@@ -169,8 +187,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: TextStyle(color: sonicSilver, fontSize: 12),
                 ),
               ),
-
-              // TÊN ĐĂNG NHẬP
               TextField(
                 controller: _usernameController,
                 decoration: InputDecoration(
@@ -191,9 +207,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: TextStyle(color: sonicSilver, fontSize: 12),
                 ),
               ),
-
-
-              // Email
               TextField(
                 controller: _emailOrPhoneController,
                 decoration: InputDecoration(
@@ -207,7 +220,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 keyboardType: TextInputType.emailAddress,
               ),
-              // Chú thích cho Email
               const Padding(
                 padding: EdgeInsets.only(top: 8.0, left: 4.0),
                 child: Text(
@@ -216,8 +228,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Mật khẩu
               TextField(
                 controller: _passwordController,
                 obscureText: !_isPasswordVisible,
@@ -242,7 +252,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
               ),
-              // Chú thích Mật khẩu
               const Padding(
                 padding: EdgeInsets.only(top: 8.0, left: 4.0),
                 child: Text(
@@ -251,8 +260,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Xác nhận mật khẩu
               TextField(
                 controller: _confirmPasswordController,
                 obscureText: !_isConfirmPasswordVisible,
@@ -278,8 +285,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // Lỗi hiển thị
               if (_errorMessage != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
@@ -289,8 +294,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     textAlign: TextAlign.center,
                   ),
                 ),
-
-              // NÚT ĐĂNG KÝ CHÍNH
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16.0),
                 child: _isLoading
@@ -301,12 +304,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 25),
-
-              // Phân cách "Hoặc đăng ký với" (ĐÃ XÓA)
-
-              // NÚT SOCIAL (ĐÃ XÓA)
-
-              // LIÊN KẾT ĐĂNG NHẬP
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

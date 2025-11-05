@@ -140,7 +140,9 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   User? _currentUser;
 
+  // Trạng thái cho cả Kết bạn và Theo dõi
   Map<String, String> _requestStatus = {};
+  Map<String, bool> _followStatus = {};
   bool _isProcessingRequest = false;
 
   bool _isSearchFieldVisible = true;
@@ -156,6 +158,13 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     _searchController.addListener(_onSearchTextChanged);
   }
 
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchTextChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void _onSearchTextChanged() {
     final query = _searchController.text.trim();
     if (_searchQuery != query) {
@@ -165,6 +174,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
         if (!_isSearching) {
           _searchResults = [];
           _requestStatus = {};
+          _followStatus = {}; // Reset cả follow status
         } else {
           _performUserSearch(query);
         }
@@ -187,7 +197,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
           .where('usernameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
           .limit(15);
 
-      // SỬA Ở ĐÂY
       final nameQuery = _firestore.collection('users')
           .where('displayNameLower', isGreaterThanOrEqualTo: queryLower)
           .where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
@@ -214,7 +223,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
       }
 
       final finalResults = resultsMap.values.toList();
-      // VÀ SỬA Ở ĐÂY
       finalResults.sort((a, b) => (a['displayName'] as String? ?? '').compareTo(b['displayName'] as String? ?? ''));
 
       if (mounted) {
@@ -227,36 +235,37 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi tìm kiếm người dùng.'), backgroundColor: coralRed));
     }
   }
-  @override
-  void dispose() {
-    _searchController.removeListener(_onSearchTextChanged);
-    _searchController.dispose();
-    super.dispose();
-  }
 
   Future<void> _updateSearchResultRequestStatus(List<String> targetUserIds) async {
     final currentUserUid = _currentUser?.uid;
     if (currentUserUid == null || targetUserIds.isEmpty) return;
 
     final myDoc = await _firestore.collection('users').doc(currentUserUid).get();
+    if (!myDoc.exists) return;
+
     final myData = myDoc.data() ?? {};
     final List<String> myOutgoingRequests = List<String>.from(myData['outgoingRequests'] ?? []);
     final List<String> myFriendUids = List<String>.from(myData['friendUids'] ?? []);
+    final List<String> myFollowingUids = List<String>.from(myData['following'] ?? []);
 
-    Map<String, String> newStatus = {};
+    Map<String, String> newRequestStatus = {};
+    Map<String, bool> newFollowStatus = {};
+
     for (var uid in targetUserIds) {
       if (myFriendUids.contains(uid)) {
-        newStatus[uid] = 'friend';
+        newRequestStatus[uid] = 'friend';
       } else if (myOutgoingRequests.contains(uid)) {
-        newStatus[uid] = 'pending';
+        newRequestStatus[uid] = 'pending';
       } else {
-        newStatus[uid] = 'none';
+        newRequestStatus[uid] = 'none';
       }
+      newFollowStatus[uid] = myFollowingUids.contains(uid);
     }
 
     if (mounted) {
       setState(() {
-        _requestStatus = newStatus;
+        _requestStatus = newRequestStatus;
+        _followStatus = newFollowStatus;
       });
     }
   }
@@ -264,7 +273,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
   void _toggleFriendRequest(Map<String, dynamic> user) async {
     final currentUser = _currentUser;
     final targetUserId = user['uid'] as String?;
-    // SỬA Ở ĐÂY
     final targetUserName = user['displayName'] as String? ?? 'Người dùng';
 
     if (currentUser == null || targetUserId == null || _isProcessingRequest) return;
@@ -290,7 +298,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã hủy lời mời kết bạn tới $targetUserName.'), backgroundColor: sonicSilver));
         }
       } else {
-        // VÀ SỬA Ở ĐÂY: Lấy tên người gửi từ Firestore
         DocumentSnapshot myUserDoc = await userRef.get();
         String senderName = 'Người dùng Zink';
         String? senderAvatarUrl;
@@ -307,12 +314,11 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
           'senderId': currentUser.uid,
           'senderName': senderName,
           'senderAvatarUrl': senderAvatarUrl,
-          'destinationId': currentUser.uid,
-          'contentPreview': 'đã gửi lời mời kết bạn cho bạn.',
           'timestamp': FieldValue.serverTimestamp(),
           'isRead': false,
           'actionTaken': false,
         });
+
         if (mounted) {
           setState(() { _requestStatus[targetUserId] = 'pending'; });
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã gửi lời mời kết bạn tới $targetUserName.'), backgroundColor: topazColor));
@@ -326,6 +332,60 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     }
   }
 
+  void _toggleFollow(Map<String, dynamic> user) async {
+    final currentUser = _currentUser;
+    final targetUserId = user['uid'] as String?;
+
+    if (currentUser == null || targetUserId == null || _isProcessingRequest) return;
+    if (mounted) setState(() => _isProcessingRequest = true);
+
+    final isFollowing = _followStatus[targetUserId] ?? false;
+    final myDocRef = _firestore.collection('users').doc(currentUser.uid);
+    final theirDocRef = _firestore.collection('users').doc(targetUserId);
+    final WriteBatch batch = _firestore.batch();
+
+    try {
+      if (isFollowing) {
+        batch.update(myDocRef, {'following': FieldValue.arrayRemove([targetUserId])});
+        batch.update(theirDocRef, {'followers': FieldValue.arrayRemove([currentUser.uid])});
+      } else {
+        DocumentSnapshot myUserDoc = await myDocRef.get();
+        String senderName = 'Một người dùng';
+        String? senderAvatarUrl;
+        if (myUserDoc.exists) {
+          final myData = myUserDoc.data() as Map<String, dynamic>;
+          senderName = myData['displayName'] ?? 'Một người dùng';
+          senderAvatarUrl = myData['photoURL'];
+        }
+
+        batch.update(myDocRef, {'following': FieldValue.arrayUnion([targetUserId])});
+        batch.update(theirDocRef, {'followers': FieldValue.arrayUnion([currentUser.uid])});
+
+        final notificationRef = theirDocRef.collection('notifications').doc();
+        batch.set(notificationRef, {
+          'type': 'follow',
+          'senderId': currentUser.uid,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl ?? '',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+      await batch.commit();
+      if (mounted) {
+        setState(() {
+          _followStatus[targetUserId] = !isFollowing;
+        });
+      }
+    } catch(e) {
+      print("Error toggling follow: $e");
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessingRequest = false);
+      }
+    }
+  }
+
   void _navigateToProfileScreen(Map<String, dynamic> user) {
     final targetUid = user['uid'] as String?;
     if (targetUid == null) return;
@@ -334,8 +394,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
         targetUserId: targetUid,
         onNavigateToHome: () => Navigator.pop(context),
         onLogout: () {}
-    )
-    ));
+    )));
   }
 
   void _navigateToMessageScreen(String targetUserId, String targetUserName) {
@@ -417,7 +476,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
         controller: _searchController,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
-          hintText: 'Tìm kiếm bạn bè hoặc người dùng mới...', // Cập nhật hint text
+          hintText: 'Tìm kiếm bạn bè hoặc người dùng mới...',
           hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
           filled: true,
           fillColor: darkSurface,
@@ -447,17 +506,11 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              'Bạn bè', // Đổi tiêu đề nếu cần
+              'Bạn bè',
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          // <<< NÚT THÊM BẠN ĐÃ BỊ XÓA (THEO YÊU CẦU) >>>
-          // IconButton(
-          //   icon: const Icon(Icons.person_add_alt_1_outlined, color: Colors.white),
-          //   onPressed: _navigateToAddFriendScreen, // Hoặc logic thêm bạn khác
-          //   splashRadius: 24,
-          // ),
         ],
       ),
     );
@@ -483,27 +536,24 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
       onTap: onTap,
       child: Container(
         width: 80,
-        color: darkSurface, // Màu nền cho action
+        color: darkSurface,
         alignment: Alignment.center,
         child: Icon(icon, color: color, size: 28),
       ),
     );
   }
 
-  // Widget Friend Item
   Widget _buildFriendItem(Map<String, dynamic> friendData) {
-    // SỬA THÀNH:
     final String friendId = friendData['uid'] as String? ?? '';
-    final String friendName = friendData['displayName'] as String? ?? 'Bạn bè'; // Sửa 'name' -> 'displayName'
+    final String friendName = friendData['displayName'] as String? ?? 'Bạn bè';
     final String friendUsername = friendData['username'] as String? ?? '';
-    final String? avatarUrl = friendData['photoURL'] as String?; // Sửa 'avatarUrl' -> 'photoURL'
+    final String? avatarUrl = friendData['photoURL'] as String?;
     final itemKey = ValueKey(friendId);
     _slidableKeys.putIfAbsent(itemKey, () => GlobalKey<_SlidableListItemState>());
 
     final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
         ? NetworkImage(avatarUrl) : null;
 
-    // Danh sách các action cho SlidableListItem
     final actions = <Widget>[
       _buildSlidableAction(
         icon: Icons.message_outlined,
@@ -517,9 +567,8 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
       ),
     ];
 
-    // Nội dung chính của ListTile
     final listTileChild = Container(
-      color: Colors.black, // Nền đen cho ListTile
+      color: Colors.black,
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         leading: CircleAvatar(
@@ -532,79 +581,123 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
       ),
     );
 
-
-    // SỬA LỖI 2-9: Truyền đầy đủ tham số cho SlidableListItem
     return SlidableListItem(
-      key: _slidableKeys[itemKey]!, // Sử dụng GlobalKey làm key cho widget
-      itemKey: itemKey,             // Key để xác định item nào đang mở
-      actionsWidth: 160.0,          // Tổng chiều rộng của các action
-      actions: actions,             // Danh sách các widget action
-      onOpen: _handleItemOpen,      // Callback khi item được mở
-      onCloseRequest: _closeOpenItem, // Callback khi yêu cầu đóng item (tap hoặc kéo ngược)
-      onChildTap: () => _navigateToProfileScreen(friendData), // Callback khi tap vào nội dung chính
-      child: listTileChild,       // Widget nội dung chính (ListTile)
+      key: _slidableKeys[itemKey]!,
+      itemKey: itemKey,
+      actionsWidth: 160.0,
+      actions: actions,
+      onOpen: _handleItemOpen,
+      onCloseRequest: _closeOpenItem,
+      onChildTap: () => _navigateToProfileScreen(friendData),
+      child: listTileChild,
     );
   }
 
+  Widget _buildSearchResultItem(Map<String, dynamic> userData) {
+    final String userId = userData['uid'] as String? ?? '';
+    final String name = userData['displayName'] as String? ?? 'Người dùng';
+    final String username = userData['username'] as String? ?? '';
+    final String? avatarUrl = userData['photoURL'] as String?;
+    final int mutual = userData['mutual'] as int? ?? 0;
 
-  // Cập nhật Widget Search Result Item (Giữ nguyên từ lần sửa trước)
-  Widget _buildSearchResultItem(Map<String, dynamic> userData) {final String userId = userData['uid'] as String? ?? '';
-  // SỬA Ở ĐÂY
-  final String name = userData['displayName'] as String? ?? 'Người dùng';
-  final String username = userData['username'] as String? ?? '';
-  // VÀ SỬA Ở ĐÂY
-  final String? avatarUrl = userData['photoURL'] as String?;
-  final int mutual = userData['mutual'] as int? ?? 0;
+    final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+        ? NetworkImage(avatarUrl)
+        : null;
 
-  final status = userId.isNotEmpty ? _requestStatus[userId] : null;
-  final isFriend = status == 'friend';
-  final isPending = status == 'pending';
+    return StreamBuilder<DocumentSnapshot>(
+      // LUÔN LẮNG NGHE TÀI LIỆU CỦA CHÍNH BẠN
+      stream: _firestore.collection('users').doc(_currentUser!.uid).snapshots(),
+      builder: (context, myDataSnapshot) {
+        if (!myDataSnapshot.hasData) {
+          // Trạng thái chờ, có thể hiển thị một placeholder đơn giản
+          return ListTile(
+            leading: CircleAvatar(radius: 25, backgroundColor: darkSurface),
+            title: Text(name, style: const TextStyle(color: Colors.white)),
+            subtitle: Text('@$username', style: TextStyle(color: sonicSilver)),
+          );
+        }
 
-  final buttonText = isFriend ? 'Bạn bè' : (isPending ? 'Hủy lời mời' : 'Kết bạn');
-  final buttonColor = isFriend ? darkSurface : (isPending ? darkSurface : topazColor);
-  final textColor = isFriend ? sonicSilver : (isPending ? sonicSilver : Colors.black);
-  final sideBorder = isFriend || isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
-  final onPressed = isFriend ? null : () => _toggleFriendRequest(userData);
+        final myData = myDataSnapshot.data!.data() as Map<String, dynamic>;
 
-  final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-      ? NetworkImage(avatarUrl) : null;
+        // Lấy trạng thái mới nhất từ stream
+        final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(userId);
+        final isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(userId);
+        final isFollowing = (myData['following'] as List<dynamic>? ?? []).contains(userId);
 
-  return Container(
-    color: Colors.black,
-    child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      leading: CircleAvatar(
-        radius: 25, backgroundImage: avatarImage, backgroundColor: darkSurface,
-        child: avatarImage == null ? const Icon(Icons.person, color: sonicSilver, size: 25) : null,
-      ),
-      title: Text( name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600) ),
-      subtitle: Text( mutual > 0 ? '$mutual bạn chung' : (username.isNotEmpty ? '@$username' : ''), style: TextStyle(color: sonicSilver) ),
-      trailing: ElevatedButton(
-        onPressed: _isProcessingRequest ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: buttonColor,
-          foregroundColor: textColor,
-          side: sideBorder,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          minimumSize: const Size(0, 30),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          disabledBackgroundColor: darkSurface,
-        ),
-        child: _isProcessingRequest && _requestStatus[userId] != 'friend'
-            ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver))
-            : Text(buttonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-      ),
-      onTap: () => _navigateToProfileScreen(userData),
-    ),
-  );
+        // --- Logic nút Kết bạn ---
+        final friendButtonText = isFriend ? 'Bạn bè' : (isPending ? 'Hủy lời mời' : 'Kết bạn');
+        final friendButtonColor = isFriend ? darkSurface : (isPending ? darkSurface : topazColor);
+        final friendTextColor = isFriend ? sonicSilver : (isPending ? sonicSilver : Colors.black);
+        final friendButtonSide = isFriend || isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+        // --- Logic nút Theo dõi ---
+        final followButtonText = isFollowing ? 'Hủy theo dõi' : 'Theo dõi';
+        final followButtonColor = isFollowing ? darkSurface : Colors.blueAccent;
+        final followTextColor = Colors.white;
+        final followButtonSide = isFollowing ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          leading: CircleAvatar(
+            radius: 25,
+            backgroundImage: avatarImage,
+            backgroundColor: darkSurface,
+            child: avatarImage == null ? const Icon(Icons.person, color: sonicSilver, size: 25) : null,
+          ),
+          title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          subtitle: Text(
+            mutual > 0 ? '$mutual bạn chung' : (username.isNotEmpty ? '@$username' : ''),
+            style: TextStyle(color: sonicSilver),
+          ),
+          trailing: Wrap(
+            spacing: 8,
+            children: [
+              // --- Nút Theo dõi ---
+              if (!isFriend)
+                SizedBox(
+                  width: 90,
+                  height: 32,
+                  child: ElevatedButton(
+                    onPressed: () => _toggleFollow(userData), // Cần đảm bảo hàm này tồn tại
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: followButtonColor,
+                      foregroundColor: followTextColor,
+                      side: followButtonSide,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Text(followButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              // --- Nút Kết bạn ---
+              SizedBox(
+                width: 90,
+                height: 32,
+                child: ElevatedButton(
+                  onPressed: isFriend ? null : () => _toggleFriendRequest(userData), // Cần đảm bảo hàm này tồn tại
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: friendButtonColor,
+                    foregroundColor: friendTextColor,
+                    side: friendButtonSide,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: EdgeInsets.zero,
+                    disabledBackgroundColor: darkSurface,
+                  ),
+                  child: Text(friendButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+          onTap: () => _navigateToProfileScreen(userData),
+        );
+      },
+    );
   }
 
-  // Widget Danh sách Bạn bè
   Widget _buildFriendsList() {
     final currentUserId = _currentUser?.uid;
     if (currentUserId == null) return const Center(child: Text('Vui lòng đăng nhập', style: TextStyle(color: sonicSilver)));
 
-    // SỬA LỖI 10 & 11: Truyền stream và builder cho StreamBuilder
     return StreamBuilder<DocumentSnapshot>(
       stream: _firestore.collection('users').doc(currentUserId).snapshots(),
       builder: (context, userSnapshot) {
@@ -615,12 +708,11 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
         final List<String> friendUids = List<String>.from(userData?['friendUids'] ?? []);
 
         if (friendUids.isEmpty) {
-          return Center( /* ... Trạng thái rỗng ... */ );
+          return Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text("Bạn chưa có người bạn nào.", style: TextStyle(color: sonicSilver, fontSize: 16))));
         }
 
-        // Giới hạn query để tránh lỗi "whereIn" quá 10 phần tử (tạm thời)
-        final queryUids = friendUids.length > 10 ? friendUids.sublist(0, 10) : friendUids;
-        if (friendUids.length > 10) print("Warning: Friend list query limited to 10.");
+        final queryUids = friendUids.length > 30 ? friendUids.sublist(0, 30) : friendUids;
+        if (friendUids.length > 30) print("Warning: Friend list query limited to 30.");
 
         return StreamBuilder<QuerySnapshot>(
           stream: queryUids.isEmpty ? Stream.empty() : _firestore.collection('users').where(FieldPath.documentId, whereIn: queryUids).snapshots(),
@@ -631,8 +723,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
             final friendDocs = friendsSnapshot.data?.docs ?? [];
             if (friendDocs.isEmpty && queryUids.isNotEmpty) return const Center(child: Text('Không tìm thấy thông tin bạn bè.', style: TextStyle(color: sonicSilver)));
 
-            // Sắp xếp theo tên
-            // SỬA THÀNH:
             friendDocs.sort((a, b) {
               final nameA = (a.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
               final nameB = (b.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
@@ -647,7 +737,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
               itemBuilder: (context, index) {
                 final friendDoc = friendDocs[index];
                 final friendData = friendDoc.data() as Map<String, dynamic>;
-                friendData['uid'] = friendDoc.id; // Đảm bảo có 'uid'
+                friendData['uid'] = friendDoc.id;
                 return _buildFriendItem(friendData);
               },
               separatorBuilder: (context, index) => const Divider( color: darkSurface, height: 1, thickness: 1, indent: 80, ),
@@ -658,7 +748,6 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     );
   }
 
-  // --- BUILD METHOD CHÍNH ---
   @override
   Widget build(BuildContext context) {
     final double searchListPaddingTop = MediaQuery.of(context).padding.top + _fixedHeaderHeight + (_isSearchFieldVisible ? _searchBarHeight : 0);
@@ -666,13 +755,12 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTap: _closeOpenItem, // Đóng item đang mở khi tap ra ngoài
+        onTap: _closeOpenItem,
         child: Stack(
           children: [
-            // Listener để ẩn/hiện search bar
             NotificationListener<UserScrollNotification>(
               onNotification: (notification) {
-                if (!_isSearching) { // Chỉ ẩn/hiện khi không tìm kiếm
+                if (!_isSearching) {
                   if (notification.metrics.axis == Axis.vertical) {
                     if (notification.direction == ScrollDirection.forward) {
                       if (!_isSearchFieldVisible) {
@@ -688,12 +776,11 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
                 }
                 return false;
               },
-              // Nội dung chính: Kết quả tìm kiếm hoặc danh sách bạn bè
               child: _isSearching
-                  ? (_searchResults.isEmpty && _searchQuery.isNotEmpty // Chỉ hiển thị "Không tìm thấy" khi đã tìm và không có kết quả
+                  ? (_searchResults.isEmpty && _searchQuery.isNotEmpty
                   ? Center(child: Padding(
-                  padding: EdgeInsets.only(top: searchListPaddingTop), // Đẩy text xuống dưới header/searchbar
-                  child: Text('Không tìm thấy kết quả nào cho "$_searchQuery"', style: TextStyle(color: sonicSilver))
+                  padding: EdgeInsets.only(top: searchListPaddingTop),
+                  child: Text('Không tìm thấy kết quả nào cho \"$_searchQuery\"', style: TextStyle(color: sonicSilver))
               ))
                   : ListView.separated(
                 key: const ValueKey('searchResults'),
@@ -705,9 +792,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
               )
                   : _buildFriendsList(),
             ),
-            // Header cố định
             Positioned( top: 0, left: 0, right: 0, child: _buildFixedHeader(context) ),
-            // Search bar động
             Positioned(
                 top: MediaQuery.of(context).padding.top + _fixedHeaderHeight,
                 left: 0, right: 0,

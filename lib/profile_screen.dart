@@ -246,12 +246,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_profileUserId.isNotEmpty) {
       _userStream = _firestore.collection('users').doc(_profileUserId).snapshots();
     }
+    // Stream này rất quan trọng để kiểm tra mối quan hệ từ phía người dùng hiện tại
     if (!_isMyProfile && _currentUser != null) {
       _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
     }
   }
 
-  // --- Hàm format Timestamp (Placeholder) ---
   String _formatTimestampAgo(Timestamp timestamp) {
     final difference = DateTime.now().difference(timestamp.toDate());
     if (difference.inHours < 1) return '${difference.inMinutes} phút';
@@ -259,8 +259,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return '${difference.inDays} ngày';
   }
 
-  // --- Hàm helper để cập nhật user profile trên Firestore (Placeholder) ---
-  // Thay thế hàm trống bằng hàm này
   Future<void> _updateUserProfile(Map<String, dynamic> dataToUpdate) async {
     if (!_isMyProfile) return;
     try {
@@ -275,31 +273,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // --- Hàm xử lý Follow/Unfollow (ĐÃ HOÀN THIỆN) ---
-  // --- Hàm xử lý Follow/Unfollow (ĐÃ SỬA) ---
   Future<void> _toggleFollow(bool amIFollowingTarget) async {
-    // 1. Kiểm tra điều kiện cần thiết
     if (_currentUser == null || _isMyProfile) return;
 
     final currentUserId = _currentUser!.uid;
     final targetUserId = _profileUserId;
 
-    // 2. Sử dụng WriteBatch để đảm bảo cả hai cập nhật cùng thành công hoặc thất bại
     final WriteBatch batch = _firestore.batch();
     final myUserRef = _firestore.collection('users').doc(currentUserId);
     final targetUserRef = _firestore.collection('users').doc(targetUserId);
 
     try {
       if (amIFollowingTarget) {
-        // --- LOGIC HỦY THEO DÕI ---
-        // Xóa người kia khỏi danh sách "following" của tôi
         batch.update(myUserRef, {'following': FieldValue.arrayRemove([targetUserId])});
-        // Xóa tôi khỏi danh sách "followers" của người kia
         batch.update(targetUserRef, {'followers': FieldValue.arrayRemove([currentUserId])});
       } else {
-        // --- LOGIC THEO DÕI (ĐÃ SỬA) ---
-
-        // Lấy dữ liệu của người gửi (là tôi) từ Firestore trước
         DocumentSnapshot myUserDoc = await myUserRef.get();
         String senderName = 'Một người dùng';
         String? senderAvatarUrl;
@@ -309,31 +297,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           senderName = myData['displayName'] ?? 'Một người dùng';
           senderAvatarUrl = myData['photoURL'];
         } else {
-          // Dự phòng nếu không có doc, lấy từ Auth (ít tin cậy hơn)
           senderName = _currentUser!.displayName ?? 'Một người dùng';
           senderAvatarUrl = _currentUser!.photoURL;
         }
 
-        // Thêm người kia vào danh sách "following" của tôi
         batch.update(myUserRef, {'following': FieldValue.arrayUnion([targetUserId])});
-        // Thêm tôi vào danh sách "followers" của người kia
         batch.update(targetUserRef, {'followers': FieldValue.arrayUnion([currentUserId])});
 
-        // Tạo một thông báo cho người được theo dõi với dữ liệu đã lấy được
         final notificationRef = targetUserRef.collection('notifications').doc();
         batch.set(notificationRef, {
           'type': 'follow',
           'senderId': currentUserId,
-          'senderName': senderName, // SỬA: Dùng biến đã lấy được
-          'senderAvatarUrl': senderAvatarUrl ?? '', // SỬA: Dùng biến đã lấy được
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl ?? '',
           'timestamp': FieldValue.serverTimestamp(),
           'isRead': false,
         });
       }
-
-      // 3. Thực thi tất cả các lệnh trong batch
       await batch.commit();
-
     } catch (e) {
       print("Lỗi khi thực hiện follow/unfollow: $e");
       if (mounted) {
@@ -342,15 +323,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     }
-  }  // --- Build Stats (ĐÃ SỬA: Bỏ Lượt thích, căn giữa Followers) ---
+  }
+
+  // --- HÀM MỚI: XỬ LÝ KẾT BẠN ---
+  Future<void> _toggleFriendRequest(String currentStatus, String targetUserName) async {
+    if (_currentUser == null || _isMyProfile) return;
+
+    final myId = _currentUser!.uid;
+    final theirId = _profileUserId;
+    final myUserRef = _firestore.collection('users').doc(myId);
+    final theirUserRef = _firestore.collection('users').doc(theirId);
+    final theirNotifications = theirUserRef.collection('notifications');
+
+    try {
+      if (currentStatus == 'pending') { // Hủy lời mời
+        await myUserRef.update({'outgoingRequests': FieldValue.arrayRemove([theirId])});
+        // Also delete the notification on their end
+        final notifQuery = await theirNotifications
+            .where('type', isEqualTo: 'friend_request')
+            .where('senderId', isEqualTo: myId)
+            .limit(1)
+            .get();
+        for (var doc in notifQuery.docs) {
+          await doc.reference.delete();
+        }
+      } else if (currentStatus == 'none') { // Gửi lời mời
+        // Get sender's info for the notification
+        DocumentSnapshot myUserDoc = await myUserRef.get();
+        String senderName = 'Người dùng';
+        String? senderAvatarUrl;
+
+        if (myUserDoc.exists) {
+          final myData = myUserDoc.data() as Map<String, dynamic>;
+          senderName = myData['displayName'] ?? 'Người dùng';
+          senderAvatarUrl = myData['photoURL'];
+        }
+
+        await myUserRef.update({'outgoingRequests': FieldValue.arrayUnion([theirId])});
+        await theirNotifications.add({
+          'type': 'friend_request',
+          'senderId': myId,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl,
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'actionTaken': false,
+        });
+      }
+    } catch (e) {
+      print("Lỗi khi gửi lời mời kết bạn: $e");
+    }
+  }
+
   Widget _buildStatsBlock(int posts, int followers, int following) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _buildStatItem(posts, 'Bài viết'),
-        // Không cần divider ở đây nếu chỉ có 3 mục
         _buildStatItem(followers, 'Người theo dõi'),
-        // Không cần divider ở đây nếu chỉ có 3 mục
         _buildStatItem(following, 'Đang theo dõi'),
       ],
     );
@@ -372,39 +402,78 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- Action Buttons ---
+  // --- (SỬA) HÀM BUILD CÁC NÚT BẤM ---
   Widget _buildActionButtons(BuildContext context, bool isAccountLocked, String name, String bio) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: StreamBuilder<DocumentSnapshot>(
         stream: _myUserDataStream,
         builder: (context, myDataSnapshot) {
-          if (_isMyProfile) {
-            return const SizedBox.shrink(); // Không hiển thị nút nào cho profile của mình
+          if (_isMyProfile || !myDataSnapshot.hasData || !myDataSnapshot.data!.exists) {
+            return const SizedBox.shrink(); // Không hiển thị nút nếu là profile của mình hoặc chưa có dữ liệu
           }
 
-          // Logic cho profile người khác
-          bool amIFollowingTarget = false;
-          if (myDataSnapshot.hasData && myDataSnapshot.data!.exists) {
-            final myData = myDataSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-            amIFollowingTarget = (myData['following'] as List<dynamic>? ?? []).contains(_profileUserId);
+          final myData = myDataSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+
+          // Lấy tất cả trạng thái từ Stream
+          final amIFollowing = (myData['following'] as List<dynamic>? ?? []).contains(_profileUserId);
+          final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(_profileUserId);
+          final isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(_profileUserId);
+
+          String friendStatus = 'none';
+          if (isFriend) {
+            friendStatus = 'friend';
+          } else if (isPending) {
+            friendStatus = 'pending';
           }
+
+          // --- Logic nút Theo dõi ---
+          final followButtonText = amIFollowing ? 'Đang theo dõi' : 'Theo dõi';
+          final followButtonColor = amIFollowing ? darkSurface : Colors.blueAccent;
+          final followTextColor = Colors.white;
+          final followButtonSide = amIFollowing ? const BorderSide(color: sonicSilver) : BorderSide.none;
+
+          // --- Logic nút Kết bạn ---
+          final friendButtonText = friendStatus == 'friend' ? 'Bạn bè' : (friendStatus == 'pending' ? 'Hủy lời mời' : 'Kết bạn');
+          final friendButtonColor = friendStatus == 'friend' ? darkSurface : (friendStatus == 'pending' ? darkSurface : topazColor);
+          final friendTextColor = friendStatus == 'friend' ? sonicSilver : (friendStatus == 'pending' ? sonicSilver : Colors.black);
+          final friendButtonSide = friendStatus == 'friend' || friendStatus == 'pending' ? BorderSide(color: sonicSilver) : BorderSide.none;
 
           return Row(
             children: [
+              // Nút Theo dõi
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () => _toggleFollow(amIFollowingTarget),
+                  onPressed: () => _toggleFollow(amIFollowing),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: amIFollowingTarget ? darkSurface : topazColor,
-                    foregroundColor: amIFollowingTarget ? Colors.white : Colors.black,
-                    side: amIFollowingTarget ? const BorderSide(color: sonicSilver) : BorderSide.none,
+                    backgroundColor: followButtonColor,
+                    foregroundColor: followTextColor,
+                    side: followButtonSide,
                     minimumSize: const Size(0, 45),
                   ),
-                  child: Text(amIFollowingTarget ? 'Đang theo dõi' : 'Theo dõi', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text(followButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
               ),
               const SizedBox(width: 10),
+
+              // Nút Kết bạn (chỉ hiển thị nếu chưa là bạn)
+              if (!isFriend)
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _toggleFriendRequest(friendStatus, name),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: friendButtonColor,
+                      foregroundColor: friendTextColor,
+                      side: friendButtonSide,
+                      minimumSize: const Size(0, 45),
+                    ),
+                    child: Text(friendButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  ),
+                ),
+              if (!isFriend)
+                const SizedBox(width: 10),
+
+              // Nút Nhắn tin
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
@@ -424,16 +493,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
+  // --- Các hàm còn lại được giữ nguyên ---
 
-  // --- Start of newly defined methods ---
-
-  // Hiển thị ảnh FullScreen
   void _showFullScreenImage(String? imageUrl, {String? tag}) {
     if (imageUrl == null || imageUrl.isEmpty || !imageUrl.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không có ảnh để hiển thị.')));
       return;
     }
-    // Logic FullScreenImageView (Inline)
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false, barrierColor: Colors.black.withOpacity(0.7),
@@ -451,8 +517,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-
-  // Hiển thị Bottom Sheet Menu
   void _showSubMenu(String title, List<Widget> items) {
     showModalBottomSheet(
       context: context,
@@ -489,14 +553,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Xử lý khi bấm vào Avatar
   void _handleAvatarTap(BuildContext context, String? avatarImageUrl) {
     final heroTag = 'userAvatar_$_profileUserId';
     if (!_isMyProfile) {
       _showFullScreenImage(avatarImageUrl, tag: heroTag);
       return;
     }
-
     _showSubMenu('Tùy chọn Ảnh đại diện', [
       ListTile(
           leading: const Icon(Icons.zoom_in, color: Colors.white),
@@ -512,21 +574,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ListTile(
             leading: const Icon(Icons.delete_forever, color: coralRed),
             title: const Text('Xóa ảnh đại diện', style: TextStyle(color: coralRed)),
-            // SỬA Ở ĐÂY
             onTap: () { Navigator.pop(context); _updateUserProfile({'photoURL': null}); }
         ),
     ]);
   }
 
-  // Xử lý khi bấm vào Ảnh bìa
   void _handleCoverTap(BuildContext context, String? coverImageUrl) {
     final heroTag = 'userCover_$_profileUserId';
-
     if (!_isMyProfile) {
       _showFullScreenImage(coverImageUrl, tag: null);
       return;
     }
-
     _showSubMenu('Tùy chọn Ảnh bìa', [
       ListTile(
           leading: const Icon(Icons.zoom_in, color: Colors.white),
@@ -547,8 +605,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ]);
   }
 
-  // Widget cho menu Profile của tôi
-  // Thay thế hàm cũ bằng hàm này
   Widget _buildMyProfileMenu(BuildContext context, Map<String, dynamic> userData) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.menu, color: Colors.white),
@@ -564,7 +620,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         } else if (value == 'edit') {
           Navigator.push(context, MaterialPageRoute(builder: (context) => EditProfileScreen(
             currentUserId: _profileUserId,
-            // SỬA Ở ĐÂY
             initialName: userData['displayName'] ?? '',
             initialBio: userData['bio'] ?? userData['title'] ?? '',
             isAccountLocked: userData['isPrivate'] ?? false,
@@ -575,7 +630,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Widget cho menu Profile của người khác
   Widget _buildOtherProfileMenu(BuildContext context) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: Colors.white),
@@ -588,10 +642,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- End of newly defined methods ---
-
-
-  // --- Gallery Tabs ---
   Widget _buildGalleryTabs() {
     final isMyProfile = _isMyProfile;
     return Container(
@@ -627,9 +677,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-
-  // --- Content Grid ---
-  // Xóa hàm _buildContentGrid() cũ và thay bằng hàm này
   Widget _buildGridForStream(Stream<QuerySnapshot> stream, String emptyMessage) {
     return StreamBuilder<QuerySnapshot>(
       stream: stream,
@@ -639,7 +686,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final postDocs = snapshot.data?.docs ?? [];
         if (postDocs.isEmpty) { return Center(child: Padding( padding: const EdgeInsets.all(40.0), child: Text(emptyMessage, style: const TextStyle(color: sonicSilver)) )); }
 
-        // Dùng SingleChildScrollView ở đây để nội dung có thể cuộn được
         return SingleChildScrollView(
           child: GridView.builder(
             padding: EdgeInsets.zero, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
@@ -659,8 +705,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-
-  // Widget cho một item trong Grid
   Widget _buildGridItem(String postId, String? imagePathOrUrl, int likes) {
     final ImageProvider? imageProvider = (imagePathOrUrl != null && imagePathOrUrl.isNotEmpty && imagePathOrUrl.startsWith('http')) ? NetworkImage(imagePathOrUrl) : null;
     return GestureDetector(
@@ -678,13 +722,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Hàm điều hướng đến Post Detail
   Future<void> _navigateToPostDetail(String postId) async {
     print("Navigating to Post Detail for: $postId");
-    // TODO: Implement navigation logic
   }
 
-  // --- Hàm Build chính ---
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot>(
@@ -694,12 +735,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (snapshot.hasError) { return Center(child: Scaffold( backgroundColor: Colors.black, body: Center(child: Text('Lỗi tải dữ liệu người dùng: ${snapshot.error}', style: const TextStyle(color: coralRed))) )); }
 
         final userData = snapshot.data?.data() as Map<String, dynamic>? ?? {};
-        // SỬA Ở ĐÂY
         final String displayedName = userData['displayName'] ?? 'Người dùng Zink';
         final String displayedTitle = userData['title'] ?? userData['bio'] ?? '';
         final String displayedBio = userData['bio'] ?? userData['title'] ?? '';
         final bool isAccountLocked = userData['isPrivate'] ?? false;
-        // VÀ SỬA Ở ĐÂY
         final String? avatarUrl = userData['photoURL'] as String?;
         final String? coverUrl = userData['coverImageUrl'] as String?;
         final List<String> followers = List<String>.from(userData['followers'] ?? []);
@@ -763,7 +802,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
     );
   }
-  // --- Phương thức xây dựng nội dung Header (ĐÃ SỬA: Bỏ totalLikes) ---
+
   Widget _buildProfileHeaderContent(
       BuildContext context, String name, String title, String bio,
       String? avatarPathOrUrl, ImageProvider? avatarImageProvider,
@@ -778,11 +817,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         children: [
           const SizedBox(height: 5),
-          // Avatar
           GestureDetector( onTap: () => _handleAvatarTap(context, avatarPathOrUrl), child: Hero( tag: heroTag, child: CircleAvatar( radius: 40, backgroundColor: darkSurface, backgroundImage: avatarImageProvider, child: avatarImageProvider == null ? const Icon(Icons.person, color: sonicSilver, size: 40) : null, ), ), ),
-          // Bio
           const SizedBox(height: 10),
-          // Stats Block (ĐÃ CẬP NHẬT)
           _buildStatsBlock(
               postsCount,
               hideSensitiveStats ? 0 : followersCount,
@@ -791,14 +827,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           if (bio.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0), // Cân nhắc thêm padding cho cân đối
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: Text(
                 bio,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: sonicSilver, fontSize: 16),
               ),
             ),
-          // Action Buttons
           _buildActionButtons( context, isAccountLocked, name, bio ),
           const SizedBox(height: 10),
         ],
