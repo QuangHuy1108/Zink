@@ -1,65 +1,32 @@
+
 // lib/search_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-// Import ProfileScreen để điều hướng đến hồ sơ người dùng
 import 'profile_screen.dart';
 
-// Import PostCard và các hằng số/hàm helper (Giả định chúng tồn tại)
-// --- Giả định PostCard và _formatTimestampAgo tồn tại ---
-// Constants (Giữ nguyên)
+// --- Giả định các file và hằng số này tồn tại ---
 const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C);
-const Color activeGreen = Color(0xFF32CD32); // <--- FIX: Thêm constant thiếu
+const Color activeGreen = Color(0xFF32CD32);
 
-// Giả định PostCard (Đã có trong file gốc)
-// Giả định PostCard (Đã có trong file gốc)
 class PostCard extends StatelessWidget {
   final Map<String, dynamic> postData;
   final VoidCallback onStateChange;
   const PostCard({super.key, required this.postData, required this.onStateChange});
 
-  Widget _buildImagePlaceholder(String? imageUrl) {
-    if (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http')) {
-      return Container(height: 150, color: Colors.grey.shade800, alignment: Alignment.center, child: Text('Image URL: $imageUrl', style: const TextStyle(color: Colors.white54, fontSize: 10)));
-    } else {
-      return Container( height: 150, color: darkSurface, alignment: Alignment.center, child: const Icon(Icons.image_not_supported, color: sonicSilver, size: 40), );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
-        padding: const EdgeInsets.all(8),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        decoration: BoxDecoration(
-            color: darkSurface,
-            borderRadius: BorderRadius.circular(12)
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // SỬA Ở ĐÂY
-            Text("Post by: ${postData['displayName'] ?? 'Người dùng'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 5),
-            _buildImagePlaceholder(postData['imageUrl']),
-            const SizedBox(height: 5),
-            Text(postData['postCaption'] ?? '', style: const TextStyle(color: Colors.white70)),
-            Text(_formatTimestampAgo(postData['timestamp'] ?? Timestamp.now()), style: const TextStyle(color: sonicSilver, fontSize: 12)),
-          ],
-        )
+      padding: const EdgeInsets.all(8),
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+      decoration: BoxDecoration(color: darkSurface, borderRadius: BorderRadius.circular(12)),
+      child: Text("Post: ${postData['postCaption'] ?? 'N/A'}", style: const TextStyle(color: Colors.white)),
     );
   }
-}
-String _formatTimestampAgo(Timestamp timestamp) {
-  final DateTime dateTime = timestamp.toDate();
-  final difference = DateTime.now().difference(dateTime);
-  if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
-  if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
-  if (difference.inHours < 24) return '${difference.inHours} giờ';
-  return '${difference.inDays} ngày';
 }
 // --- Kết thúc giả định ---
 
@@ -73,15 +40,14 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
-  String _currentQuery = ''; // Từ khóa đang nhập (dùng cho so sánh)
-  String _searchQuery = ''; // Từ khóa đã gửi (dùng cho hiển thị kết quả)
+  String _searchQuery = '';
 
-  bool _hasSearched = false;
   bool _isLoading = false;
-  bool _isSearching = false;
 
   List<Map<String, dynamic>> _userSearchResults = [];
   List<Map<String, dynamic>> _postSearchResults = [];
+  List<String> _recentSearches = [];
+  Timer? _debounce;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -91,115 +57,168 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _searchController.addListener(_onSearchQueryChanged);
+    // _loadRecentSearches(); // TODO: Tải từ bộ nhớ cục bộ nếu cần
+    _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchQueryChanged);
+    _debounce?.cancel();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
-  void _onSearchQueryChanged() {
-    final query = _searchController.text.trim();
-    if (_searchQuery != query) {
-      setState(() {
-        _searchQuery = query; // Sử dụng _searchQuery
-        _isSearching = query.isNotEmpty;
-        if (query.isEmpty) {
-          _hasSearched = false;
+  void _onSearchChanged() {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      final query = _searchController.text.trim();
+      if (query.isNotEmpty) {
+        _performSearch(query);
+      } else {
+        // Khi xóa hết chữ, reset về trạng thái ban đầu để hiện list recent
+        setState(() {
           _userSearchResults = [];
           _postSearchResults = [];
           _isLoading = false;
-        }
+        });
+      }
+    });
+     // Cập nhật query để rebuild UI (hiện nút clear)
+    setState(() {
+      _searchQuery = _searchController.text;
+    });
+  }
+
+  void _addRecentSearch(String query) {
+    if (query.isEmpty) return;
+    setState(() {
+      _recentSearches.remove(query); // Xóa nếu đã có để đưa lên đầu
+      _recentSearches.insert(0, query);
+      if (_recentSearches.length > 10) {
+        _recentSearches = _recentSearches.sublist(0, 10);
+      }
+      // _saveRecentSearches(); // TODO: Lưu vào bộ nhớ cục bộ
+    });
+  }
+
+  void _navigateToProfile(Map<String, dynamic> userData) {
+      final targetUid = userData['uid'] as String?;
+      if (targetUid == null) return;
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (context) => ProfileScreen(
+          targetUserId: targetUid,
+          onNavigateToHome: () => Navigator.pop(context),
+          onLogout: () {},
+        ),
+      ));
+  }
+
+  Future<void> _toggleFollow(Map<String, dynamic> targetUserData) async {
+    final currentUserId = _currentUser?.uid;
+    final targetUserId = targetUserData['uid'] as String?;
+    if (currentUserId == null || targetUserId == null) return;
+
+    final isCurrentlyFollowing = (targetUserData['isFollowing'] as bool?) ?? false;
+    final writeBatch = _firestore.batch();
+
+    final currentUserRef = _firestore.collection('users').doc(currentUserId);
+    final targetUserRef = _firestore.collection('users').doc(targetUserId);
+
+    if (isCurrentlyFollowing) {
+      writeBatch.update(currentUserRef, {
+        'followingUids': FieldValue.arrayRemove([targetUserId]),
+        'followingCount': FieldValue.increment(-1),
       });
+      writeBatch.update(targetUserRef, {
+        'followerUids': FieldValue.arrayRemove([currentUserId]),
+        'followerCount': FieldValue.increment(-1),
+      });
+    } else {
+      writeBatch.update(currentUserRef, {
+        'followingUids': FieldValue.arrayUnion([targetUserId]),
+        'followingCount': FieldValue.increment(1),
+      });
+      writeBatch.update(targetUserRef, {
+        'followerUids': FieldValue.arrayUnion([currentUserId]),
+        'followerCount': FieldValue.increment(1),
+      });
+    }
+    await writeBatch.commit();
+  }
+
+  Future<void> _toggleFriendRequest(Map<String, dynamic> targetUserData) async {
+    final currentUserId = _currentUser?.uid;
+    final targetUserId = targetUserData['uid'] as String?;
+    if (currentUserId == null || targetUserId == null) return;
+
+    final isPending = (targetUserData['isPending'] as bool?) ?? false;
+
+    final currentUserRef = _firestore.collection('users').doc(currentUserId);
+    final targetUserRef = _firestore.collection('users').doc(targetUserId);
+
+    if (isPending) {
+      // Hủy lời mời đã gửi
+      await currentUserRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
+      await targetUserRef.update({'incomingRequests': FieldValue.arrayRemove([currentUserId])});
+    } else {
+      // Gửi lời mời mới
+      await currentUserRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
+      await targetUserRef.update({'incomingRequests': FieldValue.arrayUnion([currentUserId])});
     }
   }
 
-  // LOGIC: Hàm này để navigate đến ProfileScreen (Đã fix lỗi undefined ProfileScreen)
-  void _navigateToProfileScreen(Map<String, dynamic> userData) {
-    final targetUid = userData['uid'] as String?;
-    if (targetUid == null) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (context) => ProfileScreen(
-        targetUserId: targetUid,
-        onNavigateToHome: () => Navigator.pop(context),
-        onLogout: () {},
-      ),
-    ));
-  }
-
-
-  // LOGIC: Thực hiện tìm kiếm TÀI KHOẢN VÀ BÀI VIẾT trên Firestore
-  // LOGIC: Thực hiện tìm kiếm TÀI KHOẢN VÀ BÀI VIẾT trên Firestore
-  void _performSearch() async {
-    final searchQuery = _searchController.text.trim();
-    if (searchQuery.isEmpty) return;
-
+  void _performSearch(String query) async {
+    if (query.isEmpty) {
+        setState(() {
+            _userSearchResults = [];
+            _postSearchResults = [];
+            _isLoading = false;
+        });
+        return;
+    }
+    
+    _addRecentSearch(query);
     setState(() {
-      _currentQuery = searchQuery;
       _isLoading = true;
-      _hasSearched = true;
-      _userSearchResults = [];
-      _postSearchResults = [];
+      _searchQuery = query;
     });
-    FocusScope.of(context).unfocus();
 
     try {
-      final queryLower = searchQuery.toLowerCase();
-      final currentUserId = _currentUser?.uid ?? '';
+      final currentUserId = _currentUser?.uid;
+      if (currentUserId == null) return;
 
-      // === 1. TÌM KIẾM TÀI KHOẢN (USERS) ===
-      // SỬA Ở ĐÂY
-      final userQuerySnapshots = await Future.wait<QuerySnapshot>([
-        _firestore.collection('users')
-            .where('usernameLower', isGreaterThanOrEqualTo: queryLower)
-            .where('usernameLower', isLessThanOrEqualTo: '$queryLower\uf8ff')
-            .limit(10)
-            .get(),
-        _firestore.collection('users')
-            .where('displayNameLower', isGreaterThanOrEqualTo: queryLower) // Đã sửa
-            .where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff') // Đã sửa
-            .limit(10)
-            .get(),
-      ]);
+      final queryLower = query.toLowerCase();
+      
+      final currentUserDoc = await _firestore.collection('users').doc(currentUserId).get();
+      final currentUserFriendUids = List<String>.from(currentUserDoc.data()?['friendUids'] ?? []);
 
+      final usernameQuery = _firestore.collection('users').where('usernameLower', isGreaterThanOrEqualTo: queryLower).where('usernameLower', isLessThanOrEqualTo: '$queryLower\uf8ff').limit(10).get();
+      final displayNameQuery = _firestore.collection('users').where('displayNameLower', isGreaterThanOrEqualTo: queryLower).where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff').limit(10).get();
+      final postTagQuery = _firestore.collection('posts').where('tags', arrayContains: queryLower).limit(10).get();
+      final postAuthorQuery = _firestore.collection('posts').where('displayNameLower', isGreaterThanOrEqualTo: queryLower).where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff').limit(10).get();
+
+      final results = await Future.wait([usernameQuery, displayNameQuery, postTagQuery, postAuthorQuery]);
+
+      final userSnapshots = [results[0] as QuerySnapshot, results[1] as QuerySnapshot];
       final Map<String, Map<String, dynamic>> userResultsMap = {};
-      for (final snapshot in userQuerySnapshots) {
+      for (final snapshot in userSnapshots) {
         for (final doc in snapshot.docs) {
           if (doc.id == currentUserId) continue;
-          final data = doc.data() as Map<String, dynamic>;
-          data['uid'] = doc.id;
-          userResultsMap[doc.id] = data;
+          final userData = doc.data() as Map<String, dynamic>;
+          final targetUserFriendUids = List<String>.from(userData['friendUids'] ?? []);
+          final mutualCount = targetUserFriendUids.where((uid) => currentUserFriendUids.contains(uid)).length;
+          
+          userResultsMap[doc.id] = {...userData, 'uid': doc.id, 'mutual': mutualCount};
         }
       }
-      final finalUserResults = userResultsMap.values.toList();
 
-
-      // === 2. TÌM KIẾM BÀI VIẾT (POSTS) ===
-      // SỬA Ở ĐÂY
-      final postQuerySnapshots = await Future.wait<QuerySnapshot>([
-        _firestore.collection('posts')
-            .where('tag', isEqualTo: '#$queryLower')
-            .orderBy('timestamp', descending: true)
-            .limit(10).get(),
-        _firestore.collection('posts')
-            .where('displayNameLower', isGreaterThanOrEqualTo: queryLower) // Đã sửa
-            .where('displayNameLower', isLessThanOrEqualTo: '$queryLower\uf8ff') // Đã sửa
-            .orderBy('displayNameLower') // Đã sửa
-            .orderBy('timestamp', descending: true)
-            .limit(10).get(),
-      ]);
-
+      final postSnapshots = [results[2] as QuerySnapshot, results[3] as QuerySnapshot];
       final Map<String, Map<String, dynamic>> postResultsMap = {};
-      for (final snapshot in postQuerySnapshots) {
+      for (final snapshot in postSnapshots) {
         for (final doc in snapshot.docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          data['id'] = doc.id;
-          data['isLiked'] = false;
-          data['likes'] = (data['likesCount'] is num ? (data['likesCount'] as num).toInt() : 0);
-          postResultsMap[doc.id] = data;
+           final postData = doc.data() as Map<String, dynamic>;
+          postResultsMap[doc.id] = {...postData, 'id': doc.id};
         }
       }
       final finalPostResults = postResultsMap.values.toList();
@@ -208,147 +227,24 @@ class _SearchScreenState extends State<SearchScreen> {
         final bTime = (b['timestamp'] as Timestamp?)?.toDate() ?? DateTime(1970);
         return bTime.compareTo(aTime);
       });
-
-
+      
       if (mounted) {
         setState(() {
-          _userSearchResults = finalUserResults;
+          _userSearchResults = userResultsMap.values.toList();
           _postSearchResults = finalPostResults;
           _isLoading = false;
         });
       }
-
     } catch (e) {
       print("Lỗi tìm kiếm: $e");
       if (mounted) {
-        setState(() { _isLoading = false; });
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Đã xảy ra lỗi khi tìm kiếm.'),
+          content: Text('Đã xảy ra lỗi khi tìm kiếm. Vui lòng thử lại.'),
           backgroundColor: coralRed,
         ));
       }
     }
-  }
-
-  // WIDGET MỚI: Xây dựng một item kết quả tìm kiếm TÀI KHOẢN
-  // WIDGET MỚI: Xây dựng một item kết quả tìm kiếm TÀI KHOẢN
-  Widget _buildUserResultItem(Map<String, dynamic> userData) {
-    final String userId = userData['uid'] as String? ?? '';
-    // SỬA Ở ĐÂY
-    final String name = userData['displayName'] as String? ?? 'Người dùng';
-    final String username = userData['username'] as String? ?? '';
-    // VÀ SỬA Ở ĐÂY
-    final String? avatarUrl = userData['photoURL'] as String?;
-    final String? bio = userData['bio'] as String?;
-    final bool isFriend = false;
-
-    final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-        ? NetworkImage(avatarUrl) : null;
-
-    return Container(
-      color: Colors.black,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        leading: CircleAvatar(
-          radius: 25, backgroundImage: avatarImage, backgroundColor: darkSurface,
-          child: avatarImage == null ? const Icon(Icons.person, color: sonicSilver, size: 25) : null,
-        ),
-        title: Text( name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600) ),
-        subtitle: Text(
-            '@$username ${bio != null && bio.isNotEmpty ? ' • $bio' : ''}',
-            style: TextStyle(color: sonicSilver)
-        ),
-        trailing: isFriend
-            ? const Icon(Icons.check, color: activeGreen)
-            : ElevatedButton(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã gửi lời mời tới $name (Mock).')));
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: topazColor,
-            foregroundColor: Colors.black,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            minimumSize: const Size(0, 30),
-          ),
-          child: const Text('Kết bạn', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-        ),
-        onTap: () => _navigateToProfileScreen(userData),
-      ),
-    );
-  }
-
-  // WIDGET: Xây dựng nội dung Body (Updated)
-  Widget _buildBodyContent(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: topazColor));
-    }
-
-    final bool noResults = _userSearchResults.isEmpty && _postSearchResults.isEmpty;
-
-    if (_currentQuery.isEmpty && !_hasSearched) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search, color: sonicSilver, size: 80),
-            const SizedBox(height: 16),
-            Text('Nhập từ khóa để tìm kiếm bài viết hoặc tài khoản', style: TextStyle(color: sonicSilver, fontSize: 16), textAlign: TextAlign.center,),
-            Text('Tìm kiếm theo Tag, Tên, hoặc Username.', style: TextStyle(color: sonicSilver.withOpacity(0.7), fontSize: 14), textAlign: TextAlign.center,),
-          ],
-        ),
-      );
-    }
-
-    if (_hasSearched && noResults) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.sentiment_dissatisfied_outlined, color: sonicSilver, size: 80),
-            const SizedBox(height: 16),
-            Text('Không tìm thấy kết quả nào cho "$_currentQuery"', style: TextStyle(color: sonicSilver, fontSize: 16)),
-          ],
-        ),
-      );
-    }
-
-    if (_hasSearched && !noResults) {
-      // Hiển thị kết quả (Users trước, Posts sau)
-      return ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 0.0).copyWith(top: 10, bottom: 50),
-        children: [
-          // 1. Kết quả Tài khoản
-          if (_userSearchResults.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.only(left: 16.0, top: 10, bottom: 8),
-              child: Text('Tài khoản', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-            ),
-            // Sử dụng map và toList để xây dựng danh sách Widgets
-            ..._userSearchResults.map((user) => _buildUserResultItem(user)).toList(),
-            if (_postSearchResults.isNotEmpty) const Divider(color: darkSurface, height: 20, thickness: 8),
-          ],
-
-          // 2. Kết quả Bài viết
-          if (_postSearchResults.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.only(left: 16.0, top: 10, bottom: 8),
-              child: Text('Bài viết', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-            ),
-            // Xây dựng danh sách PostCard
-            ..._postSearchResults.map((post) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: PostCard(
-                key: ValueKey(post['id']),
-                postData: post,
-                onStateChange: () {},
-              ),
-            )).toList(),
-          ],
-        ],
-      );
-    }
-
-    return const SizedBox.shrink(); // Trường hợp mặc định
   }
 
   @override
@@ -356,44 +252,231 @@ class _SearchScreenState extends State<SearchScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        // THỐNG NHẤT NÚT BACK
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
-          splashRadius: 28,
         ),
         backgroundColor: Colors.black,
-        elevation: 0.5, shadowColor: darkSurface,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: SizedBox(
-          height: 40,
-          child: TextField( // Ô tìm kiếm trong AppBar
-            controller: _searchController,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => _performSearch(),
-            decoration: InputDecoration(
-              hintText: 'Tìm kiếm Tag, Tên người dùng...',
-              hintStyle: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 15),
-              border: InputBorder.none,
-              prefixIcon: Icon(Icons.search, color: sonicSilver.withOpacity(0.8), size: 22),
-              suffixIcon: _currentQuery.isNotEmpty
-                  ? IconButton(
-                icon: const Icon(Icons.clear, color: sonicSilver, size: 18),
-                onPressed: _searchController.clear,
-                splashRadius: 18,
-              )
-                  : null,
-              filled: true, fillColor: darkSurface,
-              contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 0),
-              focusedBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: topazColor.withOpacity(0.5), width: 1.5)),
-              enabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-            ),
+        title: TextField(
+          controller: _searchController,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          textInputAction: TextInputAction.search,
+          onSubmitted: (query) {
+            _debounce?.cancel();
+            _performSearch(query.trim());
+          },
+          decoration: InputDecoration(
+            hintText: 'Tìm kiếm người dùng, tags...',
+            hintStyle: TextStyle(color: sonicSilver.withOpacity(0.8)),
+            border: InputBorder.none,
+            prefixIcon: Icon(Icons.search, color: sonicSilver.withOpacity(0.8)),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, color: sonicSilver),
+                    onPressed: () => _searchController.clear(),
+                  )
+                : null,
           ),
         ),
       ),
-      body: _buildBodyContent(context),
+      body: _buildBodyContent(),
+    );
+  }
+
+  Widget _buildBodyContent() {
+    if (_searchQuery.isEmpty) {
+      return _buildRecentSearches();
+    }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: topazColor));
+    }
+    if (_userSearchResults.isEmpty && _postSearchResults.isEmpty) {
+      return Center(child: Text('Không có kết quả cho "$_searchQuery"', style: const TextStyle(color: sonicSilver)));
+    }
+
+    return ListView(
+      children: [
+        if (_userSearchResults.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text('Tài khoản', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          ),
+          ..._userSearchResults.map((user) => _UserSearchResultTile(
+                key: ValueKey(user['uid']),
+                userData: user,
+                currentUser: _currentUser,
+                onToggleFollow: _toggleFollow,
+                onToggleFriend: _toggleFriendRequest,
+                onNavigateToProfile: () => _navigateToProfile(user),
+              )),
+        ],
+        if (_postSearchResults.isNotEmpty) ...[
+           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Text('Bài viết', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          ),
+          ..._postSearchResults.map((post) => PostCard(postData: post, onStateChange: () {})),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRecentSearches() {
+    if (_recentSearches.isEmpty) {
+      return const Center(child: Text('Nhập để tìm kiếm người dùng hoặc bài viết.', style: TextStyle(color: sonicSilver)));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text('Tìm kiếm gần đây', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _recentSearches.length,
+            itemBuilder: (context, index) {
+              final term = _recentSearches[index];
+              return ListTile(
+                leading: const Icon(Icons.history, color: sonicSilver),
+                title: Text(term, style: const TextStyle(color: Colors.white)),
+                trailing: IconButton(
+                    icon: const Icon(Icons.clear, color: sonicSilver, size: 20),
+                    onPressed: () {
+                        setState(() {
+                            _recentSearches.removeAt(index);
+                            // _saveRecentSearches(); // TODO
+                        });
+                    },
+                ),
+                onTap: () {
+                  _searchController.text = term;
+                  // Di chuyển con trỏ đến cuối
+                  _searchController.selection = TextSelection.fromPosition(TextPosition(offset: term.length));
+                  // Không cần gọi _performSearch ở đây vì listener đã làm việc đó
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UserSearchResultTile extends StatelessWidget {
+  final Map<String, dynamic> userData;
+  final User? currentUser;
+  final Function(Map<String, dynamic>) onToggleFollow;
+  final Function(Map<String, dynamic>) onToggleFriend;
+  final VoidCallback onNavigateToProfile;
+
+  const _UserSearchResultTile({
+    super.key,
+    required this.userData,
+    required this.currentUser,
+    required this.onToggleFollow,
+    required this.onToggleFriend,
+    required this.onNavigateToProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String name = userData['displayName'] as String? ?? 'Người dùng';
+    final String username = userData['username'] as String? ?? '';
+    final String userId = userData['uid'] as String? ?? '';
+    final String? avatarUrl = userData['photoURL'] as String?;
+    final int mutual = userData['mutual'] as int? ?? 0;
+    final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null;
+
+    if (currentUser == null) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('users').doc(currentUser!.uid).snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return ListTile(
+            leading: CircleAvatar(radius: 25, backgroundColor: darkSurface),
+            title: Text(name, style: const TextStyle(color: Colors.white)),
+            subtitle: Text('@$username', style: TextStyle(color: sonicSilver)),
+          );
+        }
+
+        final myData = snapshot.data!.data() as Map<String, dynamic>;
+        final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(userId);
+        final isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(userId);
+        final isFollowing = (myData['followingUids'] as List<dynamic>? ?? []).contains(userId);
+
+        final updatedUserData = {...userData, 'isFriend': isFriend, 'isPending': isPending, 'isFollowing': isFollowing};
+
+        // --- Logic nút Kết bạn ---
+        final friendButtonText = isFriend ? 'Bạn bè' : (isPending ? 'Hủy lời mời' : 'Kết bạn');
+        final friendButtonColor = isFriend ? darkSurface : (isPending ? darkSurface : topazColor);
+        final friendTextColor = isFriend ? sonicSilver : (isPending ? sonicSilver : Colors.black);
+        final friendButtonSide = isFriend || isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+        // --- Logic nút Theo dõi ---
+        final followButtonText = isFollowing ? 'Bỏ theo dõi' : 'Theo dõi';
+        final followButtonColor = isFollowing ? darkSurface : Colors.blueAccent;
+        final followTextColor = Colors.white;
+        final followButtonSide = isFollowing ? BorderSide(color: sonicSilver) : BorderSide.none;
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          leading: CircleAvatar(
+            radius: 25,
+            backgroundImage: avatarImage,
+            backgroundColor: darkSurface,
+            child: avatarImage == null ? const Icon(Icons.person, color: sonicSilver, size: 25) : null,
+          ),
+          title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          subtitle: Text(
+            mutual > 0 ? '$mutual bạn chung' : (username.isNotEmpty ? '@$username' : ''),
+            style: TextStyle(color: sonicSilver),
+          ),
+          trailing: Wrap(
+            spacing: 8,
+            children: [
+              // --- Nút Theo dõi ---
+              if (!isFriend)
+                SizedBox(
+                  width: 90,
+                  height: 32,
+                  child: ElevatedButton(
+                    onPressed: () => onToggleFollow(updatedUserData),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: followButtonColor,
+                      foregroundColor: followTextColor,
+                      side: followButtonSide,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: Text(followButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              // --- Nút Kết bạn ---
+              SizedBox(
+                width: 90,
+                height: 32,
+                child: ElevatedButton(
+                  onPressed: isFriend ? null : () => onToggleFriend(updatedUserData),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: friendButtonColor,
+                    foregroundColor: friendTextColor,
+                    side: friendButtonSide,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: EdgeInsets.zero,
+                    disabledBackgroundColor: darkSurface,
+                  ),
+                  child: Text(friendButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+          onTap: onNavigateToProfile,
+        );
+      },
     );
   }
 }
