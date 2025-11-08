@@ -172,6 +172,8 @@ class _FeedScreenState extends State<FeedScreen> {
 
   List<DocumentSnapshot> _suggestedFriends = [];
 
+  final ScrollController _scrollController = ScrollController(); // DÒNG NÀY
+
   @override
   void initState() {
     super.initState();
@@ -183,9 +185,31 @@ class _FeedScreenState extends State<FeedScreen> {
     _fetchSuggestedFriends();
   }
 
+  @override
+  void dispose() { // KHỐI NÀY
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   Future<void> _handleRefresh() async {
     // Tải lại cả gợi ý và bài viết
     await _fetchSuggestedFriends();
+  }
+
+  void _scrollToTopAndRefresh() { // KHỐI NÀY
+    if (_scrollController.hasClients) {
+      // 1. Cuộn lên đầu
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+      );
+      // 2. Kích hoạt tải lại dữ liệu
+      _handleRefresh();
+    } else {
+      // Nếu controller chưa sẵn sàng, chỉ tải lại
+      _handleRefresh();
+    }
   }
 
   Future<void> _fetchSuggestedFriends() async {
@@ -331,13 +355,16 @@ class _FeedScreenState extends State<FeedScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Text(
-            'Zink',
-            style: TextStyle(
-              fontFamily: 'Roboto',
-              fontWeight: FontWeight.bold,
-              fontSize: 24,
-              color: Colors.white,
+          GestureDetector( // BẮT ĐẦU DÒNG NÀY
+            onTap: _scrollToTopAndRefresh, // GỌI HÀM CUỘN VÀ TẢI LẠI
+            child: const Text(
+              'Zink',
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontWeight: FontWeight.bold,
+                fontSize: 24,
+                color: Colors.white,
+              ),
             ),
           ),
           Row(
@@ -387,6 +414,7 @@ class _FeedScreenState extends State<FeedScreen> {
         backgroundColor: darkSurface,
         displacement: appBarTotalHeight,
         child: CustomScrollView(
+          controller: _scrollController,
           physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
           slivers: <Widget>[
             SliverAppBar(
