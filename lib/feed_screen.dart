@@ -547,7 +547,6 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
       // Gọi callback để FeedScreen có thể làm mới danh sách gợi ý
-      widget.onActionTaken?.call();
     }
   }
 

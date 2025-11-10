@@ -116,7 +116,7 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
   // ----------------------------------------------------
   // --- (SỬA) CHIA SẺ LÊN TRANG CÁ NHÂN VÀ GỬI THÔNG BÁO ---
   void _shareToProfile() async {
-    final thoughts = _thoughtsController.text.trim();
+    final thoughts = _thoughtsController.text.trim(); // GIỮ LẠI NỘI DUNG NÀY CHO MỤC ĐÍCH KHÁC (nếu cần)
     final user = _currentUser;
     if (user == null) return;
 
@@ -141,24 +141,35 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       final photoURL = userData['photoURL'];
       final postOwnerId = originalPostData['uid'] as String?;
 
+      // LẤY TÊN CHỦ BÀI VIẾT GỐC
+      final originalPostOwnerName = widget.postUserName;
+
       // 2. Cập nhật lượt chia sẻ trên bài viết gốc
       batch.update(postRef, {'sharesCount': FieldValue.increment(1)});
 
-      // 3. Tạo một bài đăng "chia sẻ" mới
+      // 3. TẠO CHÚ THÍCH (CAPTION) MỚI CHỈ LÀ THÔNG BÁO CHIA SẺ
+      // Ví dụ: QuangHuy đã chia sẻ bài viết của MinhTin.
+      final newCaption = '$displayName đã chia sẻ bài viết của $originalPostOwnerName.';
+
+      // 4. Tạo một bài đăng "chia sẻ" mới
       final newPostRef = _firestore.collection('posts').doc();
       batch.set(newPostRef, {
         'uid': user.uid,
         'displayName': displayName,
         'userAvatarUrl': photoURL,
-        'postCaption': thoughts.isNotEmpty ? 'Đã chia sẻ: $thoughts' : 'Đã chia sẻ bài viết của ${widget.postUserName}.',
+        // SỬ DỤNG CHÚ THÍCH MỚI
+        'postCaption': newCaption,
         'sharedPostId': widget.postId,
         'imageUrl': null,
+        // BỔ SUNG: NẾU BẠN MUỐN LƯU THÊM PHẦN SUY NGHĨ (thoughts) VÀO TRƯỜNG KHÁC, BẠN CÓ THỂ LÀM Ở ĐÂY:
+        'shareThoughts': thoughts.isEmpty ? null : thoughts, // LƯU TƯ DUY NẾU CÓ
         'likesCount': 0, 'commentsCount': 0, 'sharesCount': 0,
         'likedBy': [], 'savedBy': [], 'privacy': 'Công khai',
         'timestamp': FieldValue.serverTimestamp(),
       });
 
-      // 4. Tạo thông báo cho chủ bài viết (nếu người chia sẻ không phải là chủ)
+      // 5. Tạo thông báo cho chủ bài viết (nếu người chia sẻ không phải là chủ)
+// ... (Logic tạo thông báo không đổi)
       if (postOwnerId != null && postOwnerId != user.uid) {
         final notificationRef = _firestore.collection('users').doc(postOwnerId).collection('notifications').doc();
         batch.set(notificationRef, {
@@ -171,8 +182,8 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
           'isRead': false,
         });
       }
-
-      // 5. Thực thi tất cả các lệnh
+// ...
+      // 6. Thực thi tất cả các lệnh
       await batch.commit();
 
       if (mounted) {
