@@ -1,3 +1,4 @@
+// lib/add_post_screen.dart
 import 'package:flutter/material.dart';
 import 'dart:io';
 
@@ -79,6 +80,7 @@ class AddPostContent extends StatefulWidget {
 
 class _AddPostContentState extends State<AddPostContent> {
   final TextEditingController _captionController = TextEditingController();
+  final TextEditingController _tagsController = TextEditingController(); // ĐÃ THÊM: Tags Controller
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -95,7 +97,6 @@ class _AddPostContentState extends State<AddPostContent> {
   }
 
   // SỬA Ở ĐÂY: THAY ĐỔI LOGIC ĐĂNG BÀI
-// SỬA Ở ĐÂY: THAY ĐỔI LOGIC ĐĂNG BÀI
   Future<void> _uploadPost() async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -112,6 +113,14 @@ class _AddPostContentState extends State<AddPostContent> {
     }
 
     setState(() => _isLoading = true);
+
+    // --- Xử lý Tags ---
+    final List<String> tags = _tagsController.text.trim()
+        .toLowerCase()
+        .split(RegExp(r'[,\s]+')) // Tách bằng dấu phẩy hoặc khoảng trắng
+        .where((tag) => tag.isNotEmpty)
+        .toList();
+    // --- Kết thúc xử lý Tags ---
 
     // IN THÔNG TIN GỠ LỖI
     print("--- BẮT ĐẦU GỠ LỖI ---");
@@ -156,6 +165,7 @@ class _AddPostContentState extends State<AddPostContent> {
         'sharesCount': 0,
         'likedBy': [],
         'savedBy': [],
+        'tags': tags, // ĐÃ THÊM: Lưu trữ Tags
       });
 
       print("--- GỠ LỖI THÀNH CÔNG ---");
@@ -196,15 +206,15 @@ class _AddPostContentState extends State<AddPostContent> {
               ),
               child: _selectedImage == null
                   ? const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add_photo_alternate_outlined, color: sonicSilver, size: 50),
-                          SizedBox(height: 8),
-                          Text('Nhấn để chọn ảnh', style: TextStyle(color: sonicSilver)),
-                        ],
-                      ),
-                    )
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_photo_alternate_outlined, color: sonicSilver, size: 50),
+                    SizedBox(height: 8),
+                    Text('Nhấn để chọn ảnh', style: TextStyle(color: sonicSilver)),
+                  ],
+                ),
+              )
                   : null,
             ),
           ),
@@ -225,6 +235,23 @@ class _AddPostContentState extends State<AddPostContent> {
             ),
           ),
           const SizedBox(height: 20),
+          // ĐÃ THÊM: TRƯỜNG NHẬP TAGS
+          TextField(
+            controller: _tagsController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Thêm tags (ví dụ: #du_lich, #meo, #food)',
+              hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+              filled: true,
+              fillColor: darkSurface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          // KẾT THÚC THÊM: TRƯỜNG NHẬP TAGS
+          const SizedBox(height: 20),
           _buildPrivacyOption('Công khai', Icons.public, 'Mọi người trên Zink'),
           _buildPrivacyOption('Bạn bè', Icons.people, 'Chỉ những người bạn theo dõi'),
           _buildPrivacyOption('Chỉ mình tôi', Icons.lock, 'Chỉ mình bạn có thể xem'),
@@ -232,24 +259,25 @@ class _AddPostContentState extends State<AddPostContent> {
           _isLoading
               ? const Center(child: CircularProgressIndicator(color: topazColor))
               : SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _uploadPost,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: topazColor,
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Đăng bài', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                ),
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _uploadPost,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: topazColor,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Đăng bài', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildPrivacyOption(String value, IconData icon, String subtitle) {
+    // ĐÃ SỬA LỖI CHÍNH TẢ: RadioListListTile -> RadioListTile
     return RadioListTile<String>(
       title: Text(value, style: const TextStyle(color: Colors.white)),
       subtitle: Text(subtitle, style: const TextStyle(color: sonicSilver)),

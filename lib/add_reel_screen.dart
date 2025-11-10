@@ -1,3 +1,4 @@
+// lib/add_reel_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -14,9 +15,10 @@ class AddReelScreen extends StatefulWidget {
 
 class _AddReelScreenState extends State<AddReelScreen> {
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _tagsController = TextEditingController(); // ĐÃ THÊM: Tags Controller
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  
+
   File? _selectedVideo;
   bool _isLoading = false;
   String _privacy = 'Công khai';
@@ -34,6 +36,14 @@ class _AddReelScreenState extends State<AddReelScreen> {
 
     setState(() => _isLoading = true);
 
+    // --- Xử lý Tags ---
+    final List<String> tags = _tagsController.text.trim()
+        .toLowerCase()
+        .split(RegExp(r'[,\s]+')) // Tách bằng dấu phẩy hoặc khoảng trắng
+        .where((tag) => tag.isNotEmpty)
+        .toList();
+    // --- Kết thúc xử lý Tags ---
+
     try {
       // Lấy thông tin người dùng từ Firestore trước
       DocumentSnapshot userDoc = await _firestore.collection('users').doc(user.uid).get();
@@ -41,13 +51,13 @@ class _AddReelScreenState extends State<AddReelScreen> {
       String? userAvatarUrl;
 
       if (userDoc.exists && userDoc.data() != null) {
-          final userData = userDoc.data() as Map<String, dynamic>;
-          displayName = userData['displayName'] ?? 'Người dùng Zink';
-          userAvatarUrl = userData['photoURL'];
+        final userData = userDoc.data() as Map<String, dynamic>;
+        displayName = userData['displayName'] ?? 'Người dùng Zink';
+        userAvatarUrl = userData['photoURL'];
       } else {
-          // Phương án dự phòng: Lấy từ Auth nếu không có trên Firestore
-          displayName = user.displayName ?? 'Người dùng Zink';
-          userAvatarUrl = user.photoURL;
+        // Phương án dự phòng: Lấy từ Auth nếu không có trên Firestore
+        displayName = user.displayName ?? 'Người dùng Zink';
+        userAvatarUrl = user.photoURL;
       }
 
       String mockVideoUrl = 'https://example.com/video.mp4';
@@ -58,7 +68,7 @@ class _AddReelScreenState extends State<AddReelScreen> {
         'displayName': displayName, // SỬA: Dùng 'displayName'
         'userAvatarUrl': userAvatarUrl ?? '', // SỬA: Dùng biến đã lấy được
         'desc': _descriptionController.text.trim(),
-        'videoUrl': mockVideoUrl, 
+        'videoUrl': mockVideoUrl,
         'thumbnailUrl': mockThumbnailUrl,
         'timestamp': FieldValue.serverTimestamp(),
         'privacy': _privacy,
@@ -67,6 +77,7 @@ class _AddReelScreenState extends State<AddReelScreen> {
         'sharesCount': 0,
         'likedBy': [],
         'savedBy': [],
+        'tags': tags, // ĐÃ THÊM: Lưu trữ Tags
       });
 
       if (mounted) {
@@ -113,16 +124,16 @@ class _AddReelScreenState extends State<AddReelScreen> {
                         ),
                         child: _selectedVideo == null
                             ? const Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.video_library_outlined, color: sonicSilver, size: 50),
-                                    SizedBox(height: 8),
-                                    Text('Nhấn để chọn video', style: TextStyle(color: sonicSilver)),
-                                  ],
-                                ),
-                              )
-                            : Center(child: Text('Đã chọn video (Placeholder)', style: TextStyle(color: Colors.white))), 
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.video_library_outlined, color: sonicSilver, size: 50),
+                              SizedBox(height: 8),
+                              Text('Nhấn để chọn video', style: TextStyle(color: sonicSilver)),
+                            ],
+                          ),
+                        )
+                            : Center(child: Text('Đã chọn video (Placeholder)', style: TextStyle(color: Colors.white))),
                       ),
                     ),
                   ),
@@ -139,6 +150,23 @@ class _AddReelScreenState extends State<AddReelScreen> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                     ),
                   ),
+                  const SizedBox(height: 20),
+                  // ĐÃ THÊM: TRƯỜNG NHẬP TAGS
+                  TextField(
+                    controller: _tagsController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Thêm tags (ví dụ: #funny, #trending)',
+                      hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                      filled: true,
+                      fillColor: darkSurface,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  // KẾT THÚC THÊM: TRƯỜNG NHẬP TAGS
                   const SizedBox(height: 20),
                   const Text('Ai có thể xem Reel này?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
@@ -181,15 +209,15 @@ class _AddReelScreenState extends State<AddReelScreen> {
       child: _isLoading
           ? const Center(child: CircularProgressIndicator(color: topazColor))
           : ElevatedButton(
-              onPressed: _uploadReel,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: topazColor,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Đăng Reel', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
+        onPressed: _uploadReel,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: topazColor,
+          foregroundColor: Colors.black,
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: const Text('Đăng Reel', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+      ),
     );
   }
 }

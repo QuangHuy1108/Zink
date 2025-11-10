@@ -179,9 +179,9 @@ class _FeedScreenState extends State<FeedScreen> {
     super.initState();
     _currentUser = _auth.currentUser;
     if (_currentUser != null)
-      {
-        _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
-      }
+    {
+      _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
+    }
     _fetchSuggestedFriends();
   }
 
@@ -243,7 +243,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
       // Xáo trộn và lấy 5 người đầu.
       suggestions.shuffle();
-      
+
       if (mounted) {
         setState(() {
           _suggestedFriends = suggestions.take(5).toList();
@@ -314,7 +314,7 @@ class _FeedScreenState extends State<FeedScreen> {
               EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0);
 
               if (index == 0) {
-                 padding = const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 8.0, top: 0);
+                padding = const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 8.0, top: 0);
               }
 
               return Padding(
@@ -401,7 +401,7 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
- @override
+  @override
   Widget build(BuildContext context)  {
     final double topPadding = MediaQuery.of(context).padding.top;
     final double appBarTotalHeight = topPadding + _headerContentHeight;
@@ -772,15 +772,52 @@ class _PostCardState extends State<PostCard> {
     _isSaved = _currentUser != null ? saves.contains(_currentUser!.uid) : false;
   }
 
-  void _updateFirestoreLike() {
+  // SỬA: Bổ sung logic tạo thông báo Like và dùng WriteBatch
+  void _updateFirestoreLike() async {
     if (_currentUser == null || _postId.isEmpty) return;
     final userId = _currentUser!.uid;
     final postRef = _firestore.collection('posts').doc(_postId);
-    final updateData = _isLiked
+    final postOwnerId = widget.postData['uid'] as String?;
+
+    final WriteBatch batch = _firestore.batch();
+
+    final bool willLike = _isLiked;
+    final updateData = willLike
         ? {'likedBy': FieldValue.arrayUnion([userId]), 'likesCount': FieldValue.increment(1)}
         : {'likedBy': FieldValue.arrayRemove([userId]), 'likesCount': FieldValue.increment(-1)};
-    postRef.update(updateData).catchError((e) => print("Error updating like: $e"));
+
+    batch.update(postRef, updateData);
+
+    // Tạo Thông báo (Chỉ khi Thích và không phải bài của mình)
+    if (willLike && postOwnerId != null && postOwnerId != userId) {
+      try {
+        final currentUserDoc = await _firestore.collection('users').doc(userId).get();
+        final currentUserData = currentUserDoc.data() as Map<String, dynamic>?;
+        final senderName = currentUserData?['displayName'] ?? 'Một người dùng';
+        final senderAvatarUrl = currentUserData?['photoURL'];
+
+        final notificationRef = _firestore.collection('users').doc(postOwnerId).collection('notifications').doc();
+        batch.set(notificationRef, {
+          'type': 'like',
+          'senderId': userId,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl,
+          'destinationId': _postId,
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      } catch (e) {
+        print("Lỗi khi lấy thông tin người gửi cho thông báo like: $e");
+      }
+    }
+
+    try {
+      await batch.commit();
+    } catch (e) {
+      print("Error updating like/notification: $e");
+    }
   }
+
 
   void _toggleLike() {
     if (_currentUser == null) return;
@@ -810,7 +847,7 @@ class _PostCardState extends State<PostCard> {
     final postOwnerId = widget.postData['uid'] as String?;
 
     try {
-      if (_isSaved) { 
+      if (_isSaved) {
         final WriteBatch batch = _firestore.batch();
         batch.update(postRef, {'savedBy': FieldValue.arrayUnion([userId])});
 
@@ -968,7 +1005,8 @@ class _PostCardState extends State<PostCard> {
           _deletePost();
         }
       },
-      icon: const Icon(Icons.more_horiz, color: sonicSilver),
+      // Đã đổi thành Icons.more_vert
+      icon: const Icon(Icons.more_vert, color: sonicSilver),
       color: darkSurface,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(),
@@ -1007,6 +1045,16 @@ class _PostCardState extends State<PostCard> {
     final String tag = widget.postData['tag'] as String? ?? '';
     final String caption = widget.postData['postCaption'] as String? ?? '';
 
+    // --- LOGIC BÀI VIẾT CHIA SẺ (Làm nổi bật 2 tên) ---
+    final String? sharedPostId = widget.postData['sharedPostId'] as String?;
+    final String? shareThoughts = widget.postData['shareThoughts'] as String?;
+
+    final bool isSharedPost = sharedPostId != null && sharedPostId.isNotEmpty;
+    final String shareMessage = isSharedPost ? caption : '';
+    final String displayCaption = isSharedPost ? (shareThoughts ?? '') : caption;
+    // --- KẾT THÚC LOGIC BÀI VIẾT CHIA SẺ ---
+
+
     final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
         ? NetworkImage(imageUrl) : null;
     final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
@@ -1038,23 +1086,87 @@ class _PostCardState extends State<PostCard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                        // --- PHẦN RICHTEXT ĐÃ CHỈNH SỬA: GỘP HẾT VÀO 1 KHỐI 2 DÒNG ---
+                        if (isSharedPost && shareMessage.isNotEmpty)
+                          Builder(
+                            builder: (context) {
+                              final String sharingName = userName;
+
+                              final RegExp regex = RegExp(r"đã chia sẻ bài viết của (.*)\.");
+                              final match = regex.firstMatch(shareMessage);
+
+                              String originalOwnerName = '';
+                              String middleText = shareMessage;
+
+                              if (match != null) {
+                                originalOwnerName = match.group(1)!.trim();
+
+                                final startIndexOfMiddle = shareMessage.indexOf(sharingName) + sharingName.length;
+                                final endIndexOfMiddle = shareMessage.indexOf(originalOwnerName);
+                                if (endIndexOfMiddle > startIndexOfMiddle) {
+                                  middleText = shareMessage.substring(startIndexOfMiddle, endIndexOfMiddle).trim();
+                                } else {
+                                  middleText = shareMessage.substring(sharingName.length).replaceAll(originalOwnerName, '').replaceAll('.', '').trim();
+                                }
+                              } else {
+                                middleText = shareMessage.substring(sharingName.length).trim();
+                              }
+
+                              return RichText(
+                                text: TextSpan(
+                                  // Base style cho phần giữa
+                                  style: TextStyle(color: sonicSilver.withOpacity(0.9), fontSize: 13),
+                                  children: <TextSpan>[
+                                    // 1. Tên người chia sẻ (IN ĐẬM, MÀU TRẮNG)
+                                    TextSpan(
+                                      text: sharingName,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
+                                    ),
+                                    // 2. Phần văn bản giữa
+                                    TextSpan(
+                                      text: ' $middleText ',
+                                      style: TextStyle(fontWeight: FontWeight.w500, color: sonicSilver.withOpacity(0.9), fontSize: 14),
+                                    ),
+                                    // 3. Tên chủ bài viết gốc (IN ĐẬM, MÀU TRẮNG)
+                                    TextSpan(
+                                      text: originalOwnerName,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
+                                    ),
+                                    // 4. Dấu chấm cuối cùng
+                                    const TextSpan(
+                                      text: '.',
+                                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.white, fontSize: 14),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1, // VẪN GIỮ 1 DÒNG
+                                overflow: TextOverflow.ellipsis, // SẼ CẮT DÙNG ... NẾU QUÁ DÀI
+                              );
+                            },
+                          )
+                        else
+                        // Chỉ hiển thị tên khi không phải bài chia sẻ (logic cũ)
+                          Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                        // --- KẾT THÚC PHẦN RICHTEXT ---
+
+                        // HIỂN THỊ THỜI GIAN LUÔN Ở DÒNG DƯỚI
                         if (locationTime.isNotEmpty)
                           Text(locationTime, style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12)),
                       ],
                     ),
                   ),
                 ),
-                if (tag.isNotEmpty)
-                  _buildMoreOptionsButton(context),
+                // --- PHẦN ĐÃ SỬA: XÓA SPACER VÀ GIỮ NÚT ---
+                _buildMoreOptionsButton(context),
               ],
             ),
           ),
 
-          if (caption.isNotEmpty)
+          // Hiển thị chú thích/cảm nghĩ (displayCaption)
+          if (displayCaption.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
-              child: Text(caption, style: const TextStyle(color: Colors.white, fontSize: 15)),
+              child: Text(displayCaption, style: const TextStyle(color: Colors.white, fontSize: 15)),
             ),
 
           GestureDetector(
