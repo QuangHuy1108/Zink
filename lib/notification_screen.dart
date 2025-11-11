@@ -602,13 +602,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
               // SỬA Ở ĐÂY: Chỉ dùng SocialNotificationTile cho friend_request
               if (type == 'friend_request') {
-                return SocialNotificationTile(
-                  notificationDoc: notifDoc,
-                  onUserTap: _handleProfileTap,
-                  onActionTap: _handleSocialAction,
-                  onLongPress: _showNotificationMenu,
-                  onTileTap: _handleTap,
-                );
+                // ... Giữ nguyên code của SocialNotificationTile ...
               } else {
                 // Xử lý tất cả các loại thông báo khác ở đây
                 final String senderName = data['senderName'] ?? 'Ai đó';
@@ -616,7 +610,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 final bool isRead = data['isRead'] ?? false;
                 final ImageProvider? avatarProvider = _getAvatarProvider(data);
 
-                // SỬA Ở ĐÂY: Thêm case cho 'share' và 'save'
+                // [SỬA ĐỔI] Tách riêng actionText để dễ quản lý
                 String actionText;
                 switch(type) {
                   case 'like':
@@ -627,19 +621,26 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     actionText = 'đã bình luận: "${commentPreview.length > 50 ? '${commentPreview.substring(0, 50)}...' : commentPreview}"';
                     break;
                   case 'friend_accept':
-                     actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
-                     break;
-                  case 'share': // THÊM MỚI
-                     actionText = 'đã chia sẻ bài viết của bạn.';
-                     break;
-                  case 'save': // THÊM MỚI
-                     actionText = 'đã lưu bài viết của bạn.';
-                     break;
+                    actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
+                    break;
+                  case 'share':
+                    actionText = 'đã chia sẻ bài viết của bạn.';
+                    break;
+                  case 'save':
+                    actionText = 'đã lưu bài viết của bạn.';
+                    break;
                   case 'follow':
-                     actionText = 'đã bắt đầu theo dõi bạn.';
-                     break;
+                    actionText = 'đã bắt đầu theo dõi bạn.';
+                    break;
+                // [THÊM] Các trường hợp tag (nếu bạn muốn văn bản khác nhau)
+                  case 'tag_post':
+                  case 'tag_comment':
+                  case 'tag_reel':
+                  case 'reply':
+                    actionText = data['contentPreview'] ?? 'đã nhắc đến bạn.';
+                    break;
                   default:
-                     actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
+                    actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
                 }
 
                 return GestureDetector(
@@ -648,19 +649,31 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     color: isRead ? Colors.transparent : darkSurface.withOpacity(0.3),
                     child: ListTile(
                       onTap: () => _handleTap(notifDoc),
-                      leading: CircleAvatar(
-                        radius: 24, backgroundColor: darkSurface, backgroundImage: avatarProvider,
-                        child: avatarProvider == null ? const Icon(Icons.person_outline, color: sonicSilver) : null,
+
+                      // --- BẮT ĐẦU SỬA ĐỔI ---
+                      leading: GestureDetector( // 1. Bọc Avatar bằng GestureDetector
+                        onTap: () => _handleProfileTap(notifDoc),
+                        child: CircleAvatar(
+                          radius: 24, backgroundColor: darkSurface, backgroundImage: avatarProvider,
+                          child: avatarProvider == null ? const Icon(Icons.person_outline, color: sonicSilver) : null,
+                        ),
                       ),
                       title: RichText(
                         text: TextSpan(
                           style: const TextStyle(color: Colors.white, fontSize: 15),
                           children: <TextSpan>[
-                            TextSpan(text: senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            TextSpan(text: ' $actionText'),
+                            TextSpan(
+                              text: senderName,
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              recognizer: TapGestureRecognizer() // 2. Thêm recognizer cho Tên
+                                ..onTap = () => _handleProfileTap(notifDoc),
+                            ),
+                            TextSpan(text: ' $actionText'), // actionText đã được xử lý ở trên
                           ],
                         ),
                       ),
+                      // --- KẾT THÚC SỬA ĐỔI ---
+
                       subtitle: Text(_formatTimestampAgo(timestamp), style: TextStyle(color: sonicSilver, fontSize: 12)),
                       trailing: const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

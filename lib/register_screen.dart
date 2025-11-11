@@ -101,6 +101,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               'followers': [],
               'following': [],
               'friendUids': [],
+              'outgoingRequests': [], // <--- THÊM DÒNG NÀY
               'postsCount': 0,
               'totalLikes': 0,
             });

@@ -147,6 +147,7 @@ class _SearchScreenState extends State<SearchScreen> {
     await writeBatch.commit();
   }
 
+// Dán hàm này vào file lib/search_screen.dart
   Future<void> _toggleFriendRequest(Map<String, dynamic> targetUserData) async {
     final currentUserId = _currentUser?.uid;
     final targetUserId = targetUserData['uid'] as String?;
@@ -156,18 +157,62 @@ class _SearchScreenState extends State<SearchScreen> {
 
     final currentUserRef = _firestore.collection('users').doc(currentUserId);
     final targetUserRef = _firestore.collection('users').doc(targetUserId);
+    final theirNotifications = targetUserRef.collection('notifications'); // <-- Tham chiếu đến collection thông báo
 
-    if (isPending) {
-      // Hủy lời mời đã gửi
-      await currentUserRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
-      await targetUserRef.update({'incomingRequests': FieldValue.arrayRemove([currentUserId])});
-    } else {
-      // Gửi lời mời mới
-      await currentUserRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
-      await targetUserRef.update({'incomingRequests': FieldValue.arrayUnion([currentUserId])});
+    try {
+      if (isPending) {
+        // Hủy lời mời đã gửi
+        await currentUserRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
+
+        // Xóa thông báo tương ứng ở người nhận
+        final notifQuery = await theirNotifications
+            .where('type', isEqualTo: 'friend_request')
+            .where('senderId', isEqualTo: currentUserId)
+            .limit(1)
+            .get();
+        for (var doc in notifQuery.docs) {
+          await doc.reference.delete();
+        }
+
+      } else {
+        // Gửi lời mời mới
+        // 1. Lấy thông tin người gửi (là bạn)
+        DocumentSnapshot myUserDoc = await currentUserRef.get();
+        String senderName = 'Một người dùng';
+        String? senderAvatarUrl;
+
+        if (myUserDoc.exists) {
+          final myData = myUserDoc.data() as Map<String, dynamic>;
+          senderName = myData['displayName'] ?? 'Một người dùng';
+          senderAvatarUrl = myData['photoURL'];
+        }
+
+        // 2. Cập nhật mảng lời mời đã gửi của bạn
+        await currentUserRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
+
+        // 3. TẠO THÔNG BÁO MỚI cho người nhận
+        await theirNotifications.add({
+          'type': 'friend_request',
+          'senderId': currentUserId,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl,
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'actionTaken': false, // <-- Thêm trường này để xử lý chấp nhận/từ chối
+        });
+      }
+
+      // Cập nhật lại UI (vì _UserSearchResultTile dùng StreamBuilder nên nó sẽ tự cập nhật)
+
+    } catch (e) {
+      print("Lỗi khi gửi/hủy lời mời kết bạn (search_screen): $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã có lỗi xảy ra. Vui lòng thử lại.')),
+        );
+      }
     }
   }
-
   void _performSearch(String query) async {
     if (query.isEmpty) {
         setState(() {
