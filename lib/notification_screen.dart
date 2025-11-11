@@ -5,12 +5,16 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'post_detail_screen.dart';
 import 'profile_screen.dart' hide PostDetailScreen, Comment;
 import 'package:flutter/gestures.dart';
+import 'reels_screen.dart';
+
+import 'comment_screen.dart'; // <-- THÊM DÒNG NÀY
+import 'models/comment_model.dart'; // <-- THÊM DÒNG NÀY
+import 'reels_screen.dart'; // <-- THÊM DÒNG NÀY
 
 // Import các màn hình/model cần thiết cho điều hướng
 // Đảm bảo các lớp giả định này tồn tại (hoặc được định nghĩa ở đây/đã import)
 // Đã xóa StoryViewScreen
-class CommentBottomSheetContent extends StatelessWidget { final String postId; final String postUserName; final int currentCommentCount; final Function(int) onCommentPosted; final String postMediaUrl; final String postCaption; final bool isPostOwner; const CommentBottomSheetContent({super.key, required this.postId, required this.postUserName, required this.currentCommentCount, required this.onCommentPosted, required this.postMediaUrl, required this.postCaption, required this.isPostOwner}); @override Widget build(BuildContext context) => Container(color: Colors.grey, child: Text("Comment Sheet for $postId"));}
-class Comment { final String id; final String userId; final String userName; final String? userAvatarUrl; final String text; final Timestamp timestamp; final String? parentId; bool isLiked; int likesCount; final List<String> likedBy; Comment({required this.id, required this.userId, required this.userName, this.userAvatarUrl, required this.text, required this.timestamp, this.parentId, this.isLiked = false, required this.likesCount, required this.likedBy}); factory Comment.fromFirestore(DocumentSnapshot doc, String currentUserId) => Comment(id: doc.id, userId: '', userName: '', text: '', timestamp: Timestamp.now(), likesCount: 0, likedBy: []);}
+
 
 // Constants
 const Color topazColor = Color(0xFFF6C886);
@@ -156,10 +160,6 @@ class SocialNotificationTile extends StatelessWidget {
     return '${difference.inDays} ngày';
   }
 
-
-  @override
-  @override
-  @override
   // TÌM VÀ THAY THẾ TOÀN BỘ HÀM NÀY
   @override
   Widget build(BuildContext context) {
@@ -445,18 +445,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
       );
     }
   }
+
+// THAY THẾ TOÀN BỘ HÀM NÀY
+// THAY THẾ TOÀN BỘ HÀM NÀY
   void _handleTap(DocumentSnapshot notifDoc) async {
     final data = notifDoc.data() as Map<String, dynamic>? ?? {};
-    final destinationId = data['destinationId'] as String?;
+    final destinationId = data['destinationId'] as String?; // Đây là postId (hoặc reelId)
     final type = data['type'] as String?;
 
-    // Đánh dấu đã đọc ngay khi bấm vào
     _markSingleNotificationAsRead(notifDoc);
 
-    Widget? targetScreen;
+    Widget? targetScreen; // Dùng để điều hướng
+
     try {
-      // --- TRƯỜNG HỢP 1: ĐI ĐẾN BÀI VIẾT ---
-      if (['like', 'comment', 'share', 'save', 'tag_post', 'tag_comment'].contains(type)) {
+      // --- TRƯỜNG HỢP 1: ĐI ĐẾN BÀI VIẾT (POST) ---
+      if (['like', 'comment', 'share', 'save', 'tag_post'].contains(type)) {
         if (destinationId == null) {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID của bài viết.');
         } else {
@@ -464,14 +467,62 @@ class _NotificationScreenState extends State<NotificationScreen> {
           if (postDoc.exists) {
             Map<String, dynamic> postData = postDoc.data()!;
             postData['id'] = postDoc.id;
-            // (Thêm các dữ liệu cần thiết khác cho PostDetailScreen nếu cần)
-            targetScreen = PostDetailScreen(postData: postData);
+            targetScreen = PostDetailScreen(postData: postData); // Đi đến PostDetailScreen
           } else {
             targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết này không còn tồn tại.');
           }
         }
-      } 
-      // --- TRƯỜNG HỢP 2: ĐI ĐẾN TRANG CÁ NHÂN ---
+      }
+
+      // --- TRƯỜNG HỢP 2: MỞ TRANG BÌNH LUẬN ---
+      else if (type == 'tag_comment' || type == 'reply') {
+        if (destinationId == null) {
+          targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID của bài viết.');
+        } else {
+          // 1. Vẫn phải lấy thông tin Post để hiển thị
+          final postDoc = await _firestore.collection('posts').doc(destinationId).get();
+          if (postDoc.exists) {
+            final postData = postDoc.data() as Map<String, dynamic>;
+            final bool isPostOwner = (postData['uid'] as String?) == _currentUser?.uid;
+
+            // 2. Mở trực tiếp Comment Sheet (thật)
+            if (mounted) {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (BuildContext sheetContext) {
+                  return FractionallySizedBox(
+                    heightFactor: 0.95,
+                    // Giờ nó sẽ gọi CommentBottomSheetContent thật
+                    child: CommentBottomSheetContent(
+                      postId: destinationId,
+                      postUserName: postData['displayName'] ?? 'Người dùng',
+                      currentCommentCount: (postData['commentsCount'] is num ? (postData['commentsCount'] as num).toInt() : 0),
+                      postMediaUrl: postData['imageUrl'],
+                      postCaption: postData['postCaption'] ?? '',
+                      isPostOwner: isPostOwner,
+                      onCommentPosted: (newCount) { },
+                    ),
+                  );
+                },
+              );
+            }
+            return;
+          } else {
+            targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Bài viết này không còn tồn tại.');
+          }
+        }
+      }
+
+      // --- TRƯỜNG HỢP 3 (REEL) ---
+      else if (type == 'tag_reel') {
+        targetScreen = ReelsScreen(onNavigateToHome: () {
+          if (Navigator.canPop(context)) Navigator.pop(context);
+        });
+      }
+
+      // --- TRƯỜNG HỢP 4 (PROFILE) ---
       else if (['follow', 'friend_accept'].contains(type)) {
         final senderId = data['senderId'] as String?;
         if (senderId != null) {
@@ -481,18 +532,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
             onLogout: () {},
           );
         } else {
-           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy người dùng này.');
+          targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy người dùng này.');
         }
-      } 
-      // --- CÁC TRƯỜNG HỢP KHÁC ---
-      else {
-        // Bạn có thể thêm các trường hợp khác ở đây, ví dụ: đi đến Story, trang Page, ...
-        // Hiện tại sẽ không làm gì để tránh lỗi không mong muốn
-        print("Chưa xử lý điều hướng cho loại thông báo: $type");
-        return; 
       }
 
-      // Điều hướng nếu có màn hình đích
+      // --- TRƯỜNG HỢP KHÁC ---
+      else {
+        print("Chưa xử lý điều hướng cho loại thông báo: $type");
+        return;
+      }
+
+      // Điều hướng nếu có màn hình đích (cho trường hợp 1, 3, 4)
       if (targetScreen != null && mounted) {
         Navigator.push(context, MaterialPageRoute(builder: (context) => targetScreen!));
       }
@@ -503,9 +553,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
     }
   }
-
-
-  @override
   @override
   Widget build(BuildContext context) {
     final currentUser = _auth.currentUser;

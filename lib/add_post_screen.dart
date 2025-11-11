@@ -104,7 +104,10 @@ class _AddPostContentState extends State<AddPostContent> {
       return;
     }
 
-    if (_selectedImage == null && _captionController.text.trim().isEmpty) {
+    final caption = _captionController.text.trim();
+    final tags = _tagsController.text.trim().toLowerCase().split(RegExp(r'[,\s]+')).where((tag) => tag.isNotEmpty).toList();
+
+    if (_selectedImage == null && caption.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Vui lòng thêm ảnh hoặc viết nội dung để đăng bài.'),
         backgroundColor: coralRed,
@@ -114,21 +117,11 @@ class _AddPostContentState extends State<AddPostContent> {
 
     setState(() => _isLoading = true);
 
-    // --- Xử lý Tags ---
-    final List<String> tags = _tagsController.text.trim()
-        .toLowerCase()
-        .split(RegExp(r'[,\s]+')) // Tách bằng dấu phẩy hoặc khoảng trắng
-        .where((tag) => tag.isNotEmpty)
-        .toList();
-    // --- Kết thúc xử lý Tags ---
-
-    // IN THÔNG TIN GỠ LỖI
     print("--- BẮT ĐẦU GỠ LỖI ---");
     print("DEBUG 1: Đang đăng bài cho UID: ${user.uid}");
 
     try {
       String? imageUrl;
-
       if (_selectedImage != null) {
         imageUrl = "https://picsum.photos/seed/${DateTime.now().millisecondsSinceEpoch}/800/800";
       }
@@ -138,25 +131,30 @@ class _AddPostContentState extends State<AddPostContent> {
 
       String displayName;
       String? userAvatarUrl;
+      String username; // <-- Biến mới để lưu username
 
       if (userDoc.exists && userDoc.data() != null) {
         final userData = userDoc.data() as Map<String, dynamic>;
         print("DEBUG 3: Dữ liệu lấy từ Firestore là: $userData");
         displayName = userData['displayName'] ?? 'Người dùng Zink (Lỗi)';
         userAvatarUrl = userData['photoURL'];
+        username = userData['username'] ?? user.email?.split('@').first ?? 'user'; // <-- Lấy username
       } else {
-        print("DEBUG 4: Không tìm thấy tài liệu Firestore. Lấy từ Auth. displayName của Auth là: ${user.displayName}");
+        print("DEBUG 4: Không tìm thấy tài liệu Firestore. Lấy từ Auth.");
         displayName = user.displayName ?? 'Người dùng Zink';
         userAvatarUrl = user.photoURL;
+        username = user.email?.split('@').first ?? 'user'; // <-- Lấy username (dự phòng)
       }
 
       print("DEBUG 5: Tên hiển thị cuối cùng sẽ được lưu là: '$displayName'");
 
-      await _firestore.collection('posts').add({
+      // 1. Tạo bài viết mới
+      final newPostRef = await _firestore.collection('posts').add({
         'uid': user.uid,
         'displayName': displayName,
         'userAvatarUrl': userAvatarUrl,
-        'postCaption': _captionController.text.trim(),
+        'username': username, // <-- Lưu username của người đăng
+        'postCaption': caption,
         'imageUrl': imageUrl,
         'timestamp': FieldValue.serverTimestamp(),
         'privacy': _privacy,
@@ -165,8 +163,55 @@ class _AddPostContentState extends State<AddPostContent> {
         'sharesCount': 0,
         'likedBy': [],
         'savedBy': [],
-        'tags': tags, // ĐÃ THÊM: Lưu trữ Tags
+        'tags': tags,
       });
+
+      final newPostId = newPostRef.id;
+
+      // --- BẮT ĐẦU LOGIC GỬI THÔNG BÁO TAG ---
+      final WriteBatch tagBatch = _firestore.batch();
+
+      // 2. Phân tích caption để tìm tag @username
+      RegExp tagRegex = RegExp(r'@([a-zA-Z0-9_]+)');
+      List<String> mentionedUsernames = tagRegex.allMatches(caption)
+          .map((match) => match.group(1)!)
+          .toSet()
+          .toList();
+
+      List<String> mentionedUserIds = [];
+      if (mentionedUsernames.isNotEmpty) {
+        // 3. Truy vấn CSDL để lấy ID của các username này
+        final usersSnapshot = await _firestore.collection('users')
+            .where('username', whereIn: mentionedUsernames.take(30).toList())
+            .get();
+        mentionedUserIds = usersSnapshot.docs.map((doc) => doc.id).toList();
+      }
+
+      // 4. Gửi thông báo cho từng người được tag
+      for (String userIdToNotify in mentionedUserIds) {
+        if (userIdToNotify != user.uid) { // Không tự tag chính mình
+          final tagNotificationRef = _firestore
+              .collection('users')
+              .doc(userIdToNotify) // Gửi cho người được tag
+              .collection('notifications')
+              .doc();
+
+          tagBatch.set(tagNotificationRef, {
+            'type': 'tag_post', // <-- Loại thông báo mới
+            'senderId': user.uid,
+            'senderName': displayName,
+            'senderAvatarUrl': userAvatarUrl,
+            'destinationId': newPostId, // ID của bài viết vừa tạo
+            'contentPreview': 'đã nhắc đến bạn trong một bài viết.',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          });
+        }
+      }
+
+      // 5. Thực thi batch thông báo
+      await tagBatch.commit();
+      // --- KẾT THÚC LOGIC GỬI THÔNG BÁO TAG ---
 
       print("--- GỠ LỖI THÀNH CÔNG ---");
 
@@ -188,6 +233,7 @@ class _AddPostContentState extends State<AddPostContent> {
       }
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(

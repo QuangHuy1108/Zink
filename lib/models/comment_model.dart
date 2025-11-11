@@ -14,11 +14,12 @@ class Comment {
   bool isLiked;
   int likesCount;
   final List<String> likedBy;
+  final String username; // <-- THÊM DÒNG NÀY
 
   Comment({
     required this.id,
     required this.userId,
-    required this.userName,
+    required this.userName, // Đây là displayName
     this.userAvatarUrl,
     required this.text,
     required this.timestamp,
@@ -26,10 +27,9 @@ class Comment {
     this.isLiked = false,
     required this.likesCount,
     required this.likedBy,
+    required this.username, // <-- THÊM DÒNG NÀY
   });
 
-  // Factory constructor để tạo một đối tượng Comment từ một DocumentSnapshot của Firestore.
-  // Nó cũng tính toán luôn trạng thái 'isLiked' dựa trên ID của người dùng hiện tại.
   factory Comment.fromFirestore(DocumentSnapshot doc, String currentUserId) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>? ?? {};
     List<String> likedByList = List<String>.from(data['likedBy'] ?? []);
@@ -37,7 +37,7 @@ class Comment {
     return Comment(
       id: doc.id,
       userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Người dùng ẩn',
+      userName: data['displayName'] ?? 'Người dùng ẩn', // SỬA LẠI TỪ LẦN TRƯỚC
       userAvatarUrl: data['userAvatarUrl'],
       text: data['text'] ?? '',
       timestamp: data['timestamp'] ?? Timestamp.now(),
@@ -45,6 +45,7 @@ class Comment {
       likesCount: (data['likesCount'] is num ? (data['likesCount'] as num).toInt() : 0),
       likedBy: likedByList,
       isLiked: currentUserId.isNotEmpty && likedByList.contains(currentUserId),
+      username: data['username'] ?? '', // <-- THÊM DÒNG NÀY (Giả sử bạn lưu 'username' khi tạo user)
     );
   }
 }

@@ -36,38 +36,41 @@ class _AddReelScreenState extends State<AddReelScreen> {
 
     setState(() => _isLoading = true);
 
-    // --- Xử lý Tags ---
+    final description = _descriptionController.text.trim(); // <-- Lấy mô tả
     final List<String> tags = _tagsController.text.trim()
         .toLowerCase()
-        .split(RegExp(r'[,\s]+')) // Tách bằng dấu phẩy hoặc khoảng trắng
+        .split(RegExp(r'[,\s]+'))
         .where((tag) => tag.isNotEmpty)
         .toList();
-    // --- Kết thúc xử lý Tags ---
 
     try {
-      // Lấy thông tin người dùng từ Firestore trước
+      // 1. Lấy thông tin người dùng (tương tự Post)
       DocumentSnapshot userDoc = await _firestore.collection('users').doc(user.uid).get();
       String displayName;
       String? userAvatarUrl;
+      String username; // <-- Biến mới
 
       if (userDoc.exists && userDoc.data() != null) {
         final userData = userDoc.data() as Map<String, dynamic>;
         displayName = userData['displayName'] ?? 'Người dùng Zink';
         userAvatarUrl = userData['photoURL'];
+        username = userData['username'] ?? user.email?.split('@').first ?? 'user'; // <-- Lấy username
       } else {
-        // Phương án dự phòng: Lấy từ Auth nếu không có trên Firestore
         displayName = user.displayName ?? 'Người dùng Zink';
         userAvatarUrl = user.photoURL;
+        username = user.email?.split('@').first ?? 'user'; // <-- Lấy username (dự phòng)
       }
 
       String mockVideoUrl = 'https://example.com/video.mp4';
       String mockThumbnailUrl = 'https://example.com/thumbnail.jpg';
 
-      await _firestore.collection('reels').add({
+      // 2. Tạo Reel mới
+      final newReelRef = await _firestore.collection('reels').add({
         'uid': user.uid,
-        'displayName': displayName, // SỬA: Dùng 'displayName'
-        'userAvatarUrl': userAvatarUrl ?? '', // SỬA: Dùng biến đã lấy được
-        'desc': _descriptionController.text.trim(),
+        'displayName': displayName,
+        'userAvatarUrl': userAvatarUrl ?? '',
+        'username': username, // <-- Lưu username
+        'desc': description,
         'videoUrl': mockVideoUrl,
         'thumbnailUrl': mockThumbnailUrl,
         'timestamp': FieldValue.serverTimestamp(),
@@ -77,8 +80,55 @@ class _AddReelScreenState extends State<AddReelScreen> {
         'sharesCount': 0,
         'likedBy': [],
         'savedBy': [],
-        'tags': tags, // ĐÃ THÊM: Lưu trữ Tags
+        'tags': tags,
       });
+
+      final newReelId = newReelRef.id;
+
+      // --- BẮT ĐẦU LOGIC GỬI THÔNG BÁO TAG ---
+      final WriteBatch tagBatch = _firestore.batch();
+
+      // 3. Phân tích mô tả (description) để tìm tag @username
+      RegExp tagRegex = RegExp(r'@([a-zA-Z0-9_]+)');
+      List<String> mentionedUsernames = tagRegex.allMatches(description)
+          .map((match) => match.group(1)!)
+          .toSet()
+          .toList();
+
+      List<String> mentionedUserIds = [];
+      if (mentionedUsernames.isNotEmpty) {
+        // 4. Truy vấn CSDL để lấy ID
+        final usersSnapshot = await _firestore.collection('users')
+            .where('username', whereIn: mentionedUsernames.take(30).toList())
+            .get();
+        mentionedUserIds = usersSnapshot.docs.map((doc) => doc.id).toList();
+      }
+
+      // 5. Gửi thông báo cho từng người được tag
+      for (String userIdToNotify in mentionedUserIds) {
+        if (userIdToNotify != user.uid) { // Không tự tag chính mình
+          final tagNotificationRef = _firestore
+              .collection('users')
+              .doc(userIdToNotify) // Gửi cho người được tag
+              .collection('notifications')
+              .doc();
+
+          tagBatch.set(tagNotificationRef, {
+            'type': 'tag_reel', // <-- Loại thông báo mới
+            'senderId': user.uid,
+            'senderName': displayName,
+            'senderAvatarUrl': userAvatarUrl,
+            'destinationId': newReelId, // ID của Reel vừa tạo
+            'contentPreview': 'đã nhắc đến bạn trong một Reel.',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          });
+        }
+      }
+
+      // 6. Thực thi batch thông báo
+      await tagBatch.commit();
+      // --- KẾT THÚC LOGIC GỬI THÔNG BÁO TAG ---
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -99,7 +149,6 @@ class _AddReelScreenState extends State<AddReelScreen> {
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

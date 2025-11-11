@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'models/comment_model.dart';
 import 'utils/app_colors.dart';
 
+
 // TODO: Consider using a dedicated logging package like 'logger' for better error handling.
 
 class CommentBottomSheetContent extends StatefulWidget {
@@ -72,14 +73,12 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     if (text.isEmpty || user == null) return;
     FocusScope.of(context).unfocus();
 
-    // Start of modification: More robust user info fetching
+    // Start of modification: More robust user info fetching (GIỮ NGUYÊN)
     String displayName = 'Người dùng ẩn'; // Default value
     String? photoURL;
-
-    // 1. Prioritize fetching from Firestore as it's likely the most updated source.
     try {
       DocumentSnapshot userDoc =
-          await _firestore.collection('users').doc(user.uid).get();
+      await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>;
         displayName = userData['displayName'] ?? displayName;
@@ -89,21 +88,40 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
       developer.log("Error fetching user data from Firestore for comment: $e",
           name: 'CommentBottomSheet');
     }
-
-    // 2. Fallback to FirebaseAuth data if Firestore data is not available.
     if (displayName == 'Người dùng ẩn' && user.displayName != null) {
-        displayName = user.displayName!;
+      displayName = user.displayName!;
     }
     photoURL ??= user.photoURL;
     // End of modification
 
-    final parentId = _replyingToComment?.id;
+    // --- BẮT ĐẦU SỬA LOGIC PARENTID ---
+    String? finalParentId;
+    String? repliedToUserId;
+
+    if (_replyingToComment != null) {
+      // Lấy ID của người mình đang trả lời (để gửi thông báo)
+      repliedToUserId = _replyingToComment!.userId;
+
+      // Logic "Flattening":
+      // Nếu bình luận mình đang reply ĐÃ LÀ CON (có parentId),
+      // thì parentId của bình luận MỚI = parentId của bình luận đó (tức là Id của "cha").
+      if (_replyingToComment!.parentId != null) {
+        finalParentId = _replyingToComment!.parentId;
+      } else {
+        // Nếu bình luận mình đang reply LÀ CHA (parentId == null),
+        // thì parentId của bình luận MỚI = Id của bình luận đó.
+        finalParentId = _replyingToComment!.id;
+      }
+    }
+    // --- KẾT THÚC SỬA LOGIC PARENTID ---
+
+    _commentController.clear();
 
     _commentController.clear();
     if (mounted) setState(() => _replyingToComment = null);
 
     try {
-      // 1. Save comment to the post's sub-collection
+      // 1. Save comment to the post's sub-collection (GIỮ NGUYÊN)
       final newCommentRef = await _firestore
           .collection('posts')
           .doc(widget.postId)
@@ -114,65 +132,89 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
         'userAvatarUrl': photoURL,
         'text': text,
         'timestamp': FieldValue.serverTimestamp(),
-        'parentId': parentId,
+        'parentId': finalParentId,
         'likesCount': 0,
         'likedBy': [],
+        // TODO: Bạn nên thêm 'username' ở đây nếu dùng logic tag
       });
 
       final WriteBatch batch = _firestore.batch();
 
-      // 2. Update the post's comment count
+      // 2. Update the post's comment count (GIỮ NGUYÊN)
       final postRef = _firestore.collection('posts').doc(widget.postId);
       batch.update(postRef, {'commentsCount': FieldValue.increment(1)});
 
-      // 3. Get post data to find the owner and create a notification
+      // 3. Get post data to find the owner (GIỮ NGUYÊN)
       final postSnapshot = await postRef.get();
-      if (postSnapshot.exists) {
-        final postData = postSnapshot.data() as Map<String, dynamic>;
-        final postOwnerId = postData['uid'] as String?;
-
-        // 4. Create notification if the commenter is not the post owner
-        if (postOwnerId != null && postOwnerId != user.uid) {
-          final notificationRef = _firestore
-              .collection('users')
-              .doc(postOwnerId)
-              .collection('notifications')
-              .doc();
-          batch.set(notificationRef, {
-            'type': 'comment',
-            'senderId': user.uid,
-            'senderName': displayName,
-            'senderAvatarUrl': photoURL,
-            'destinationId': widget.postId,
-            'commentId': newCommentRef.id,
-            'contentPreview': text,
-            'timestamp': FieldValue.serverTimestamp(),
-            'isRead': false,
-          });
-        }
-
-        // 5. Create notification for the replied-to comment's author
-        if (_replyingToComment != null &&
-            _replyingToComment!.userId != user.uid &&
-            _replyingToComment!.userId != postOwnerId) {
-          final replyNotificationRef = _firestore
-              .collection('users')
-              .doc(_replyingToComment!.userId)
-              .collection('notifications')
-              .doc();
-          batch.set(replyNotificationRef, {
-            'type': 'reply',
-            'senderId': user.uid,
-            'senderName': displayName,
-            'senderAvatarUrl': photoURL,
-            'destinationId': widget.postId,
-            'commentId': newCommentRef.id,
-            'contentPreview': text,
-            'timestamp': FieldValue.serverTimestamp(),
-            'isRead': false,
-          });
-        }
+      if (!postSnapshot.exists) {
+        // Nếu post không tồn tại, chỉ commit batch và thoát
+        await batch.commit();
+        widget.onCommentPosted(widget.currentCommentCount + 1);
+        return;
       }
+
+      final postData = postSnapshot.data() as Map<String, dynamic>;
+      final postOwnerId = postData['uid'] as String?;
+
+      // --- BẮT ĐẦU LOGIC THÔNG BÁO ĐÃ SỬA ---
+
+      bool postOwnerWasNotified = false; // Cờ để tránh 2 thông báo
+
+      // 4. (ƯU TIÊN) Gửi thông báo cho người được trả lời
+      if (repliedToUserId != null && repliedToUserId != user.uid) {
+
+        // Nếu người được trả lời chính là chủ post, đánh dấu đã thông báo
+        if (repliedToUserId == postOwnerId) {
+          postOwnerWasNotified = true;
+        }
+
+        final replyNotificationRef = _firestore
+            .collection('users')
+            .doc(repliedToUserId) // Gửi cho người được trả lời
+            .collection('notifications')
+            .doc();
+
+        batch.set(replyNotificationRef, {
+          'type': 'reply', // <-- Luôn là 'reply'
+          'senderId': user.uid,
+          'senderName': displayName,
+          'senderAvatarUrl': photoURL,
+          'destinationId': widget.postId,
+          'commentId': newCommentRef.id,
+          'contentPreview': 'đã nhắc đến bạn trong một bình luận.',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+
+      // 5. Gửi thông báo cho chủ bài viết (NẾU chưa được thông báo ở bước 4)
+      if (postOwnerId != null &&
+          postOwnerId != user.uid &&
+          !postOwnerWasNotified) { // <-- Kiểm tra cờ
+
+        final notificationRef = _firestore
+            .collection('users')
+            .doc(postOwnerId)
+            .collection('notifications')
+            .doc();
+        batch.set(notificationRef, {
+          'type': 'comment', // <-- Chỉ là 'comment' (vì là bình luận gốc)
+          'senderId': user.uid,
+          'senderName': displayName,
+          'senderAvatarUrl': photoURL,
+          'destinationId': widget.postId,
+          'commentId': newCommentRef.id,
+          'contentPreview': text,
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+
+      // (Nếu bạn có logic tag @username, nó sẽ nằm ở đây,
+      // và cũng cần kiểm tra
+      // userIdToNotify != repliedToUserId && userIdToNotify != postOwnerId)
+
+      // --- KẾT THÚC LOGIC THÔNG BÁO ĐÃ SỬA ---
 
       // 6. Commit all batch operations
       await batch.commit();
@@ -233,10 +275,19 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     }
   }
 
-  void _replyToComment(Comment comment) => setState(() {
-        _replyingToComment = comment;
-        _commentFocusNode.requestFocus();
-      });
+  void _replyToComment(Comment comment) {
+    // Sửa ở đây: Dùng comment.username thay vì comment.userName
+    final String tag = '@${comment.username} ';
+
+    setState(() {
+      _replyingToComment = comment;
+      _commentController.text = tag;
+      _commentController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _commentController.text.length),
+      );
+      _commentFocusNode.requestFocus();
+    });
+  }
 
   String _formatTime(Timestamp timestamp) {
     final diff = DateTime.now().difference(timestamp.toDate());
@@ -308,22 +359,41 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
 
   void _deleteComment(Comment comment) async {
     try {
-      // Use a batch to ensure atomicity
       final WriteBatch batch = _firestore.batch();
+      final postRef = _firestore.collection('posts').doc(widget.postId);
+      final commentsCollection = postRef.collection('comments');
 
-      final commentRef = _firestore
-          .collection('posts')
-          .doc(widget.postId)
-          .collection('comments')
-          .doc(comment.id);
+      // 1. Tham chiếu đến bình luận cần xóa
+      final commentRef = commentsCollection.doc(comment.id);
+
+      // 2. LOGIC MỚI: Nếu đây là bình luận cha (parentId là null),
+      //    hãy tìm và "thăng cấp" (promote) tất cả các con của nó.
+      if (comment.parentId == null) {
+        // Tìm tất cả bình luận có parentId trỏ đến bình luận này
+        final repliesSnapshot = await commentsCollection
+            .where('parentId', isEqualTo: comment.id)
+            .get();
+
+        // Cập nhật 'parentId' của chúng thành null để biến chúng thành bình luận cha
+        for (final replyDoc in repliesSnapshot.docs) {
+          batch.update(replyDoc.reference, {'parentId': null});
+        }
+      }
+
+      // 3. Xóa chính bình luận này (dù là cha hay con)
       batch.delete(commentRef);
 
-      final postRef = _firestore.collection('posts').doc(widget.postId);
+      // 4. Cập nhật post count (luôn chỉ trừ 1, vì chúng ta không xóa con)
       batch.update(postRef, {'commentsCount': FieldValue.increment(-1)});
 
+      // 5. Thực thi tất cả các lệnh
       await batch.commit();
 
+      // 6. Cập nhật UI (chỉ trừ 1)
+      // Lưu ý: Các bình luận con sẽ tự động xuất hiện
+      // ở cấp cao nhất trong lần build lại tiếp theo.
       widget.onCommentPosted(widget.currentCommentCount - 1);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Đã xóa bình luận.')));
@@ -334,13 +404,14 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
             content: Text('Lỗi: Không thể xóa bình luận.'),
             backgroundColor: coralRed));
       }
-      developer.log("Error deleting comment: $e", name: 'CommentBottomSheet');
+      developer.log("Error deleting comment (promoting replies): $e", name: 'CommentBottomSheet');
     }
   }
 
   Widget _buildCommentItem(Comment comment) {
     final bool isMyComment = comment.userId == _currentUser?.uid;
     final bool enableLongPress = widget.isPostOwner || isMyComment;
+    final bool isReply = comment.parentId != null;
     final String? avatarUrl = comment.userAvatarUrl;
     final ImageProvider? avatarImage = (avatarUrl != null &&
             avatarUrl.isNotEmpty &&
@@ -351,7 +422,12 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     return GestureDetector(
       onLongPress: enableLongPress ? () => _showCommentMenu(comment) : null,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+        padding: EdgeInsets.only(
+          top: 12.0,
+          bottom: 12.0,
+          left: isReply ? 50.0 : 16.0, // Thụt lề 50.0 nếu là reply
+          right: 16.0,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -511,14 +587,61 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     );
   }
 
-  Widget _buildCommentSection(List<Comment> comments) {
+// DÁN CODE MỚI NÀY VÀO
+  Widget _buildCommentSection(List<DocumentSnapshot> docs) { // Nhận vào List<DocumentSnapshot>
+    final String currentUserId = _currentUser?.uid ?? '';
+
+    // --- BẮT ĐẦU LOGIC MỚI ---
+
+    // 1. Chuẩn bị 2 danh sách:
+    //    - một cho bình luận cha (topLevelComments)
+    //    - một cho bình luận con (repliesMap)
+    final List<Comment> topLevelComments = [];
+    final Map<String, List<Comment>> repliesMap = {};
+
+    // 2. Lọc và phân loại tất cả bình luận
+    for (final doc in docs) {
+      try {
+        final comment = Comment.fromFirestore(doc, currentUserId);
+
+        // Kiểm tra xem bình luận có parentId không
+        if (comment.parentId == null) {
+          // Nếu KHÔNG, nó là bình luận cha
+          topLevelComments.add(comment);
+        } else {
+          // Nếu CÓ, nó là bình luận con
+          // Thêm nó vào danh sách trả lời của cha nó
+          if (repliesMap.containsKey(comment.parentId!)) {
+            repliesMap[comment.parentId!]!.add(comment);
+          } else {
+            repliesMap[comment.parentId!] = [comment];
+          }
+        }
+      } catch (e) {
+        developer.log("Error parsing comment in _buildCommentSection: $e", name: 'CommentBottomSheet');
+      }
+    }
+    // --- KẾT THÚC LOGIC MỚI ---
+
+// --- BẮT ĐẦU SỬA ---
+    // --- BẮT ĐẦU SỬA ---
+    // 1. Đếm số lượng bình luận con (trả lời) thực sự được nhóm
+    int replyCount = 0;
+    repliesMap.values.forEach((replyList) {
+      replyCount += replyList.length;
+    });
+
+    // 2. Tổng số bình luận HIỂN THỊ = (số bình luận cha + số bình luận con được nhóm)
+    // Ví dụ: 4 = 4 (cha) + 0 (con) HOẶC 4 = 3 (cha) + 1 (con)
+    final int totalVisibleComments = topLevelComments.length + replyCount;
+    // --- KẾT THÚC SỬA ---
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
             children: [
-              Text('${comments.length} bình luận',
+              Text('$totalVisibleComments bình luận', // <-- SỬA Ở ĐÂY (Sẽ hiển thị số 3)
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.bold)),
               const Spacer()
@@ -526,16 +649,40 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
           ),
         ),
         const Divider(color: darkSurface, height: 1),
+
+        // Danh sách (ListView)
         Expanded(
-          child: comments.isEmpty
+          child: topLevelComments.isEmpty // Nếu không có bình luận cha nào
               ? const Center(
-                  child: Text("Chưa có bình luận nào.",
-                      style: TextStyle(color: sonicSilver)))
+              child: Text("Chưa có bình luận nào.",
+                  style: TextStyle(color: sonicSilver)))
+          // Tạo danh sách chỉ dựa trên bình luận cha
               : ListView.builder(
-                  padding: EdgeInsets.zero,
-                  itemCount: comments.length,
-                  itemBuilder: (context, index) =>
-                      _buildCommentItem(comments[index])),
+            padding: EdgeInsets.zero,
+            itemCount: topLevelComments.length,
+            itemBuilder: (context, index) {
+              // 3. Lấy bình luận cha
+              final parentComment = topLevelComments[index];
+
+              // 4. Lấy tất cả bình luận con của nó từ Map
+              final replies = repliesMap[parentComment.id] ?? [];
+
+              // 5. Trả về một Column: Gồm Cha và các Con của nó
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 5a. Hiển thị bình luận cha
+                  _buildCommentItem(parentComment),
+
+                  // 5b. Hiển thị tất cả bình luận con (replies)
+                  // Hàm _buildCommentItem của bạn đã có sẵn logic thụt lề
+                  // (do chúng ta đã sửa ở bước trước),
+                  // nên nó sẽ tự động thụt lề cho replies.
+                  ...replies.map((reply) => _buildCommentItem(reply)),
+                ],
+              );
+            },
+          ),
         )
       ],
     );
@@ -627,7 +774,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
                       .collection('posts')
                       .doc(widget.postId)
                       .collection('comments')
-                      .orderBy('timestamp', descending: true)
+                      .orderBy('timestamp', descending: false)
                       .snapshots(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -644,11 +791,8 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return _buildCommentSection([]);
                     }
-                    final comments = snapshot.data!.docs
-                        .map((doc) =>
-                            Comment.fromFirestore(doc, _currentUser?.uid ?? ''))
-                        .toList();
-                    return _buildCommentSection(comments);
+                    final docs = snapshot.data!.docs;
+                    return _buildCommentSection(docs);
                   },
                 ),
               ),

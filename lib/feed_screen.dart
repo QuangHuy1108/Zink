@@ -376,7 +376,7 @@ class _FeedScreenState extends State<FeedScreen> {
               style: TextStyle(
                 fontFamily: 'Roboto',
                 fontWeight: FontWeight.bold,
-                fontSize: 24,
+                fontSize: 40,
                 color: Colors.white,
               ),
             ),

@@ -2,12 +2,14 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'package:flutter/rendering.dart'; // <-- THÊM DÒNG NÀY
 import 'session_manager.dart'; // Assuming SessionManager is defined in the single file now
 import 'home_screen.dart';   // Assuming HomeScreen is defined in the single file now
 import 'login_screen.dart';  // Assuming LoginScreen is defined in the single file now
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  debugPaintSizeEnabled = false; // <-- THÊM DÒNG NÀY (ĐỂ GIÁ TRỊ LÀ false)
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
