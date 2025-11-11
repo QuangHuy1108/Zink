@@ -76,6 +76,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     // Start of modification: More robust user info fetching (GIỮ NGUYÊN)
     String displayName = 'Người dùng ẩn'; // Default value
     String? photoURL;
+    String username = 'user'; // <-- THÊM DÒNG NÀY (default)
     try {
       DocumentSnapshot userDoc =
       await _firestore.collection('users').doc(user.uid).get();
@@ -83,6 +84,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
         final userData = userDoc.data() as Map<String, dynamic>;
         displayName = userData['displayName'] ?? displayName;
         photoURL = userData['photoURL'] ?? photoURL;
+        username = userData['username'] ?? user.email?.split('@').first ?? 'user'; // <-- THÊM DÒNG NÀY
       }
     } catch (e) {
       developer.log("Error fetching user data from Firestore for comment: $e",
@@ -92,6 +94,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
       displayName = user.displayName!;
     }
     photoURL ??= user.photoURL;
+    if (username == 'user') username = user.email?.split('@').first ?? 'user'; // <-- THÊM DÒNG NÀY (fallback)
     // End of modification
 
     // --- BẮT ĐẦU SỬA LOGIC PARENTID ---
@@ -135,7 +138,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
         'parentId': finalParentId,
         'likesCount': 0,
         'likedBy': [],
-        // TODO: Bạn nên thêm 'username' ở đây nếu dùng logic tag
+        'username': username, // <-- THÊM DÒNG NÀY
       });
 
       final WriteBatch batch = _firestore.batch();
@@ -204,7 +207,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
           'senderAvatarUrl': photoURL,
           'destinationId': widget.postId,
           'commentId': newCommentRef.id,
-          'contentPreview': text,
+          'contentPreview': 'đã bình luận vào bài viết của bạn.',
           'timestamp': FieldValue.serverTimestamp(),
           'isRead': false,
         });
@@ -277,7 +280,7 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
 
   void _replyToComment(Comment comment) {
     // Sửa ở đây: Dùng comment.username thay vì comment.userName
-    final String tag = '@${comment.username} ';
+    final String tag = '@${comment.userName} ';
 
     setState(() {
       _replyingToComment = comment;

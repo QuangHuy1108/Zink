@@ -202,8 +202,7 @@ class _AddPostContentState extends State<AddPostContent> {
             'senderName': displayName,
             'senderAvatarUrl': userAvatarUrl,
             'destinationId': newPostId, // ID của bài viết vừa tạo
-            'contentPreview': 'đã nhắc đến bạn trong một bài viết.',
-            'timestamp': FieldValue.serverTimestamp(),
+            'contentPreview': 'đã nhắc đến bạn trong một bài viết.', // <--- DÒNG NÀY            'timestamp': FieldValue.serverTimestamp(),
             'isRead': false,
           });
         }

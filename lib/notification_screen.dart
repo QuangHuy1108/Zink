@@ -174,12 +174,28 @@ class SocialNotificationTile extends StatelessWidget {
 
     String actionText;
     switch (type) {
+    // Các loại có tương tác trực tiếp
       case 'follow':
         actionText = 'đã bắt đầu theo dõi bạn.';
         break;
       case 'friend_request':
         actionText = 'đã gửi cho bạn lời mời kết bạn.';
         break;
+
+    // --- PHẦN BỔ SUNG MỚI ---
+    // Thêm các loại tương tác theo yêu cầu của bạn
+      case 'like':
+        actionText = 'đã tim bài viết của bạn.';
+        break;
+      case 'save': //
+        actionText = 'đã lưu bài viết của bạn.';
+        break;
+      case 'share': //
+        actionText = 'đã chia sẻ bài viết của bạn.';
+        break;
+    // --- KẾT THÚC PHẦN BỔ SUNG ---
+
+    // Mặc định: Lấy từ contentPreview (cho comment, reply, tag, v.v.)
       default:
         actionText = data['contentPreview'] as String? ?? '...';
         break;
@@ -422,7 +438,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     try {
       // --- TRƯỜNG HỢP 1: ĐI ĐẾN BÀI VIẾT (POST) ---
-      if (['like', 'comment', 'share', 'save', 'tag_post'].contains(type)) {
+      if (['like', 'share', 'save', 'tag_post'].contains(type)) {
         if (destinationId == null) {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID của bài viết.');
         } else {
@@ -438,7 +454,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
 
       // --- TRƯỜNG HỢP 2: MỞ TRANG BÌNH LUẬN ---
-      else if (type == 'tag_comment' || type == 'reply') {
+      else if (type == 'tag_comment' || type == 'reply' || type == 'comment') {
         if (destinationId == null) {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID của bài viết.');
         } else {
