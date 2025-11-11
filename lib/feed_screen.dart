@@ -229,8 +229,6 @@ class _FeedScreenState extends State<FeedScreen> {
       final excludeUids = {
         _currentUser!.uid, // Loại trừ chính mình
         ...myFriends,           // Loại trừ bạn bè
-        ...myOutgoingRequests,  // Loại trừ người đã gửi lời mời
-        ...myFollowing,         // Loại trừ người đang theo dõi
       };
 
       // 3. Lấy người dùng về để lọc. Tăng giới hạn để có nhiều lựa chọn hơn.
@@ -238,7 +236,23 @@ class _FeedScreenState extends State<FeedScreen> {
 
       // 4. Lọc ở phía client.
       final suggestions = usersSnapshot.docs.where((doc) {
-        return !excludeUids.contains(doc.id);
+        final docId = doc.id;
+
+        // 1. Lọc cơ bản: Bỏ qua nếu là bạn hoặc là chính mình
+        if (excludeUids.contains(docId)) {
+          return false;
+        }
+
+        // 2. Lọc theo yêu cầu mới: Bỏ qua CHỈ KHI đã gửi lời mời VÀ đang theo dõi
+        final bool hasSentRequest = myOutgoingRequests.contains(docId);
+        final bool isFollowing = myFollowing.contains(docId);
+
+        if (hasSentRequest && isFollowing) {
+          return false; // Đã làm cả hai -> Lọc bỏ
+        }
+
+        // 3. Giữ lại trong các trường hợp khác (chưa làm gì, chỉ follow, hoặc chỉ kết bạn)
+        return true;
       }).toList();
 
       // Xáo trộn và lấy 5 người đầu.
