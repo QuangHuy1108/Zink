@@ -238,7 +238,7 @@ class SocialNotificationTile extends StatelessWidget {
                 TextSpan(
                   text: senderName,
                   style: const TextStyle(fontWeight: FontWeight.bold),
-                  recognizer: TapGestureRecognizer()..onTap = () => onUserTap(notificationDoc),
+                  recognizer: TapGestureRecognizer()..onTap = () => onUserTap(notificationDoc), // <-- ĐÂY LÀ PHẦN NÂNG CẤP
                 ),
                 TextSpan(text: ' $actionText'),
               ],
@@ -266,43 +266,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   User? _currentUser;
-
-  // Helper functions used inside the class
-  String _formatTimestampAgo(Timestamp timestamp) {
-    final DateTime dateTime = timestamp.toDate();
-    final difference = DateTime.now().difference(dateTime);
-    if (difference.inSeconds < 60) return '${difference.inSeconds} giây';
-    if (difference.inMinutes < 60) return '${difference.inMinutes} phút';
-    if (difference.inHours < 24) return '${difference.inHours} giờ';
-    return '${difference.inDays} ngày';
-  }
-
-  ImageProvider? _getAvatarProvider(Map<String, dynamic> data) {
-    final String? avatarUrl = data['senderAvatarUrl'] as String?;
-    if (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http')) {
-      try { return NetworkImage(avatarUrl); } catch (e) { return null; }
-    }
-    return null;
-  }
-
-  IconData _getIconForType(String type) {
-    switch (type) {
-      case 'like': return Icons.favorite_rounded;
-      case 'comment': return Icons.question_answer_rounded;
-      case 'my_post_save': return Icons.bookmark_rounded;
-      case 'suggest_page': return Icons.star_rounded;
-      case 'tag_post': case 'tag_comment': case 'tag_story': return Icons.alternate_email_rounded;
-      default: return Icons.notifications_none;
-    }
-  }
-
-  Color _getColorForType(String type) {
-    switch (type) {
-      case 'like': return coralRed;
-      case 'suggest_page': return topazColor;
-      default: return sonicSilver;
-    }
-  }
 
   // Placeholder methods
   void _showCommentSheetForPost(BuildContext context, Map<String, dynamic> postData) { /* ... */ }
@@ -553,6 +516,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
     }
   }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = _auth.currentUser;
@@ -595,92 +559,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
           return ListView.separated(
             itemCount: notificationDocs.length,
+            // Đây là nội dung mới cho itemBuilder
             itemBuilder: (context, index) {
               final notifDoc = notificationDocs[index];
-              final data = notifDoc.data() as Map<String, dynamic>? ?? {};
-              final type = data['type'] as String? ?? '';
 
-              // SỬA Ở ĐÂY: Chỉ dùng SocialNotificationTile cho friend_request
-              if (type == 'friend_request') {
-                // ... Giữ nguyên code của SocialNotificationTile ...
-              } else {
-                // Xử lý tất cả các loại thông báo khác ở đây
-                final String senderName = data['senderName'] ?? 'Ai đó';
-                final Timestamp timestamp = data['timestamp'] ?? Timestamp.now();
-                final bool isRead = data['isRead'] ?? false;
-                final ImageProvider? avatarProvider = _getAvatarProvider(data);
-
-                // [SỬA ĐỔI] Tách riêng actionText để dễ quản lý
-                String actionText;
-                switch(type) {
-                  case 'like':
-                    actionText = 'đã thích bài viết của bạn.';
-                    break;
-                  case 'comment':
-                    final commentPreview = data['contentPreview'] as String? ?? '';
-                    actionText = 'đã bình luận: "${commentPreview.length > 50 ? '${commentPreview.substring(0, 50)}...' : commentPreview}"';
-                    break;
-                  case 'friend_accept':
-                    actionText = 'đã chấp nhận lời mời kết bạn của bạn.';
-                    break;
-                  case 'share':
-                    actionText = 'đã chia sẻ bài viết của bạn.';
-                    break;
-                  case 'save':
-                    actionText = 'đã lưu bài viết của bạn.';
-                    break;
-                  case 'follow':
-                    actionText = 'đã bắt đầu theo dõi bạn.';
-                    break;
-                // [THÊM] Các trường hợp tag (nếu bạn muốn văn bản khác nhau)
-                  case 'tag_post':
-                  case 'tag_comment':
-                  case 'tag_reel':
-                  case 'reply':
-                    actionText = data['contentPreview'] ?? 'đã nhắc đến bạn.';
-                    break;
-                  default:
-                    actionText = data['contentPreview'] ?? 'vừa có hoạt động mới.';
-                }
-
-                return GestureDetector(
-                  onLongPress: () => _showNotificationMenu(notifDoc),
-                  child: Container(
-                    color: isRead ? Colors.transparent : darkSurface.withOpacity(0.3),
-                    child: ListTile(
-                      onTap: () => _handleTap(notifDoc),
-
-                      // --- BẮT ĐẦU SỬA ĐỔI ---
-                      leading: GestureDetector( // 1. Bọc Avatar bằng GestureDetector
-                        onTap: () => _handleProfileTap(notifDoc),
-                        child: CircleAvatar(
-                          radius: 24, backgroundColor: darkSurface, backgroundImage: avatarProvider,
-                          child: avatarProvider == null ? const Icon(Icons.person_outline, color: sonicSilver) : null,
-                        ),
-                      ),
-                      title: RichText(
-                        text: TextSpan(
-                          style: const TextStyle(color: Colors.white, fontSize: 15),
-                          children: <TextSpan>[
-                            TextSpan(
-                              text: senderName,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                              recognizer: TapGestureRecognizer() // 2. Thêm recognizer cho Tên
-                                ..onTap = () => _handleProfileTap(notifDoc),
-                            ),
-                            TextSpan(text: ' $actionText'), // actionText đã được xử lý ở trên
-                          ],
-                        ),
-                      ),
-                      // --- KẾT THÚC SỬA ĐỔI ---
-
-                      subtitle: Text(_formatTimestampAgo(timestamp), style: TextStyle(color: sonicSilver, fontSize: 12)),
-                      trailing: const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    ),
-                  ),
-                );
-              }
+              // LUÔN LUÔN DÙNG SocialNotificationTile
+              return SocialNotificationTile(
+                key: ValueKey(notifDoc.id), // Thêm Key để Flutter nhận diện
+                notificationDoc: notifDoc,
+                onUserTap: _handleProfileTap,
+                onActionTap: _handleSocialAction, // Đảm bảo tên hàm đúng
+                onLongPress: _showNotificationMenu, // Đảm bảo tên hàm đúng
+                onTileTap: _handleTap,
+              );
             },
             separatorBuilder: (context, index) => const Divider(color: darkSurface, height: 0.5, thickness: 0.5),
           );

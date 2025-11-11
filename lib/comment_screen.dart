@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'models/comment_model.dart';
 import 'utils/app_colors.dart';
-
+import 'profile_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
 
 // TODO: Consider using a dedicated logging package like 'logger' for better error handling.
 
@@ -357,6 +357,30 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     if (confirm == true) _deleteComment(comment);
   }
 
+  void _navigateToProfile(String userId) {
+    if (!mounted) return;
+
+    // KHÔNG đóng BottomSheet (Không gọi Navigator.pop(context))
+
+    // Đẩy (push) trang Profile lên trên Navigator hiện tại
+    Navigator.of(context).push( // <-- ĐÃ BỎ rootNavigator: true
+      MaterialPageRoute(
+        builder: (context) => ProfileScreen(
+          targetUserId: userId,
+          // Cung cấp các callback cơ bản cho ProfileScreen
+          onNavigateToHome: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+          onLogout: () {
+            // Hàm logout không nên được gọi từ đây
+          },
+        ),
+      ),
+    );
+  }
+
   void _deleteComment(Comment comment) async {
     try {
       final WriteBatch batch = _firestore.batch();
@@ -408,14 +432,17 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
     }
   }
 
+// lib/comment_screen.dart
+// Thay thế hàm _buildCommentItem cũ bằng hàm này:
+
   Widget _buildCommentItem(Comment comment) {
     final bool isMyComment = comment.userId == _currentUser?.uid;
     final bool enableLongPress = widget.isPostOwner || isMyComment;
     final bool isReply = comment.parentId != null;
     final String? avatarUrl = comment.userAvatarUrl;
     final ImageProvider? avatarImage = (avatarUrl != null &&
-            avatarUrl.isNotEmpty &&
-            avatarUrl.startsWith('http'))
+        avatarUrl.isNotEmpty &&
+        avatarUrl.startsWith('http'))
         ? NetworkImage(avatarUrl)
         : null;
 
@@ -431,14 +458,19 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(
-                radius: 18,
-                backgroundImage: avatarImage,
-                backgroundColor: darkSurface,
-                child: avatarImage == null
-                    ? const Icon(Icons.person_outline,
-                        size: 18, color: sonicSilver)
-                    : null),
+            // --- BẮT ĐẦU SỬA 1: BỌC AVATAR ---
+            GestureDetector(
+              onTap: () => _navigateToProfile(comment.userId), // <-- GỌI HÀM
+              child: CircleAvatar(
+                  radius: 18,
+                  backgroundImage: avatarImage,
+                  backgroundColor: darkSurface,
+                  child: avatarImage == null
+                      ? const Icon(Icons.person_outline,
+                      size: 18, color: sonicSilver)
+                      : null),
+            ),
+            // --- KẾT THÚC SỬA 1 ---
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -446,23 +478,28 @@ class _CommentBottomSheetContentState extends State<CommentBottomSheetContent> {
                 children: [
                   Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                         color: darkSurface,
                         borderRadius: BorderRadius.circular(15)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          comment.userName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              fontSize: 14),
+                        // --- BẮT ĐẦU SỬA 2: BỌC TÊN ---
+                        GestureDetector(
+                          onTap: () => _navigateToProfile(comment.userId), // <-- GỌI HÀM
+                          child: Text(
+                            comment.userName, // Tên người dùng
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                fontSize: 14),
+                          ),
                         ),
+                        // --- KẾT THÚC SỬA 2 ---
                         const SizedBox(height: 4),
                         Text(
-                          comment.text,
+                          comment.text, // Nội dung bình luận
                           style: TextStyle(
                               color: Colors.white.withAlpha(230),
                               fontSize: 14,
