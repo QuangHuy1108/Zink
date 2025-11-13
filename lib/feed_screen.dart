@@ -12,6 +12,7 @@ import 'search_screen.dart';
 import 'notification_screen.dart' hide Comment, StoryViewScreen, CommentBottomSheetContent, ProfileScreen;
 import 'post_detail_screen.dart';
 import 'message_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // --- Định nghĩa Comment ---
 class Comment {
@@ -493,7 +494,7 @@ class SuggestedFriendsSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 220,
+            height: 260, // <<< TĂNG CHIỀU CAO TẠI ĐÂY (Từ 220 lên 260)
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -507,7 +508,7 @@ class SuggestedFriendsSection extends StatelessWidget {
                   key: ValueKey(userDoc.id),
                   userData: userData,
                   myUserDataStream: myUserDataStream,
-                  onActionTaken: onActionTaken, // <-- TRUYỀN CALLBACK XUỐNG
+                  onActionTaken: onActionTaken,
                 );
               },
             ),
@@ -586,6 +587,7 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         await userRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
         await targetNotificationRef.add({'type': 'friend_request', 'senderId': currentUser.uid, 'senderName': senderName, 'timestamp': FieldValue.serverTimestamp(), 'isRead': false, 'actionTaken': false});
       }
+      widget.onActionTaken?.call();
     });
   }
 
@@ -611,6 +613,7 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
         batch.set(theirDocRef.collection('notifications').doc(), {'type': 'follow', 'senderId': currentUser.uid, 'senderName': senderName, 'timestamp': FieldValue.serverTimestamp(), 'isRead': false});
       }
       await batch.commit();
+      widget.onActionTaken?.call();
     });
   }
 
@@ -758,12 +761,48 @@ class _PostCardState extends State<PostCard> {
   late int _commentsCount;
   late int _sharesCount;
 
+  // --- TRẠNG THÁI MỚI VÀ KEY ---
+  bool _isCurrentlyHidden = false;
+  String? _hiddenReason;
+  late String _localStorageKey;
+  // -----------------------------
+
   @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
+    _postId = widget.postData['id'] as String? ?? '';
+    // Tạo key duy nhất dựa trên PostId và UserID để tránh xung đột giữa các user
+    _localStorageKey = 'hidden_post_${_currentUser?.uid ?? 'guest'}_$_postId';
     _updateStateFromWidget();
+    _loadHiddenState();
   }
+
+  // --- HÀM MỚI: TẢI TRẠNG THÁI ẨN TỪ LOCAL STORAGE ---
+  void _loadHiddenState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isHidden = prefs.getBool(_localStorageKey) ?? false;
+    final reason = prefs.getString('${_localStorageKey}_reason');
+
+    if (mounted) {
+      setState(() {
+        _isCurrentlyHidden = isHidden;
+        _hiddenReason = reason;
+      });
+    }
+  }
+
+  // --- HÀM MỚI: LƯU TRẠNG THÁI ẨN VÀO LOCAL STORAGE ---
+  void _saveHiddenState(bool isHidden, String? reason) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_localStorageKey, isHidden);
+    if (reason != null && isHidden) {
+      await prefs.setString('${_localStorageKey}_reason', reason);
+    } else {
+      await prefs.remove('${_localStorageKey}_reason');
+    }
+  }
+
 
   @override
   void didUpdateWidget(covariant PostCard oldWidget) {
@@ -944,6 +983,7 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
+  // Chức năng Xóa bài viết (Đã có logic trong file)
   void _deletePost() async {
     if (widget.postData['uid'] != _currentUser?.uid || _postId.isEmpty) return;
     final confirm = await showDialog<bool>(
@@ -971,8 +1011,104 @@ class _PostCardState extends State<PostCard> {
         await _firestore.collection('posts').doc(_postId).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.')));
+          // Sau khi xóa thành công, ta mô phỏng ẩn vĩnh viễn (do nó không còn tồn tại)
+          setState(() {
+            _isCurrentlyHidden = true; // Chỉ để làm mất widget này khỏi màn hình
+          });
+          _saveHiddenState(true, 'Đã xóa');
         }
       } catch (e) { /* Handle error */ }
+    }
+  }
+
+  // Chức năng 2. Chỉnh sửa bài viết (Mô phỏng)
+  void _editPost() {
+    // TODO: Triển khai logic điều hướng đến EditPostScreen
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chức năng Chỉnh sửa bài viết chưa được triển khai.')));
+    }
+  }
+
+  // Chức năng 3. Báo cáo bài viết (Hoàn thiện logic mới)
+  void _reportPost() {
+    _showReportDialog();
+  }
+
+  // Chức năng 4. Ẩn bài viết này (Hoàn thiện logic mới)
+  void _hidePost() {
+    if (mounted) {
+      setState(() {
+        _isCurrentlyHidden = true;
+        _hiddenReason = 'Ẩn bài viết';
+      });
+      _saveHiddenState(true, 'Ẩn bài viết');
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Đã ẩn bài viết này.'),
+        backgroundColor: sonicSilver,
+        duration: Duration(seconds: 2),
+      ));
+    }
+  }
+
+  // Chức năng 5. Bỏ theo dõi người này
+  void _unfollowUser() async {
+    if (_currentUser == null) return;
+    final targetUserId = widget.postData['uid'] as String?;
+    final targetUserName = widget.postData['displayName'] as String? ?? 'Người dùng';
+
+    if (targetUserId == null || targetUserId == _currentUser!.uid) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Xác nhận Bỏ theo dõi', style: TextStyle(color: Colors.white)),
+          content: Text('Bạn có chắc chắn muốn bỏ theo dõi $targetUserName không?', style: const TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+            ),
+            TextButton(
+              child: const Text('Bỏ theo dõi', style: TextStyle(color: coralRed)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      final batch = _firestore.batch();
+      final myUserRef = _firestore.collection('users').doc(_currentUser!.uid);
+      final theirUserRef = _firestore.collection('users').doc(targetUserId);
+
+      try {
+        // 1. Cập nhật danh sách "following" của tôi
+        batch.update(myUserRef, {'following': FieldValue.arrayRemove([targetUserId])});
+        // 2. Cập nhật danh sách "followers" của họ
+        batch.update(theirUserRef, {'followers': FieldValue.arrayRemove([_currentUser!.uid])});
+
+        await batch.commit();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã bỏ theo dõi $targetUserName.'), backgroundColor: sonicSilver));
+          // Ẩn bài viết và lưu trạng thái
+          setState(() {
+            _isCurrentlyHidden = true;
+            _hiddenReason = 'Bỏ theo dõi';
+          });
+          _saveHiddenState(true, 'Bỏ theo dõi');
+        }
+      } catch (e) {
+        print("Lỗi khi bỏ theo dõi: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể bỏ theo dõi.'), backgroundColor: coralRed));
+        }
+      }
     }
   }
 
@@ -999,14 +1135,186 @@ class _PostCardState extends State<PostCard> {
     ));
   }
 
+  // --- LOGIC BÁO CÁO MỚI ---
+
+  Future<void> _showCustomReasonDialog() async {
+    final TextEditingController controller = TextEditingController();
+    final bool? shouldSubmit = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Lý do khác', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            controller: controller,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Nhập lý do báo cáo...',
+              hintStyle: TextStyle(color: sonicSilver),
+              filled: true,
+              fillColor: Colors.black,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            ),
+            maxLines: 3,
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.pop(context, false),
+            ),
+            TextButton(
+              child: const Text('Gửi', style: TextStyle(color: coralRed)),
+              onPressed: () {
+                if (controller.text.trim().isNotEmpty) {
+                  Navigator.pop(context, true);
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Vui lòng nhập lý do.'), backgroundColor: coralRed),
+                  );
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldSubmit == true && controller.text.trim().isNotEmpty) {
+      _submitReportAndHide('Khác', controller.text.trim());
+    }
+  }
+
+  Future<void> _showReportDialog() async {
+    final List<String> reasons = [
+      'Nội dung nhạy cảm',
+      'Nội dung người lớn',
+      'Nội dung mang tính bạo lực',
+      'Tôi không muốn xem nội dung này',
+      'Khác',
+    ];
+
+    String? selectedReason = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: darkSurface,
+      builder: (BuildContext context) {
+        return Container(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom), // Dùng padding.bottom thay vì viewInsets
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text(
+                  'Báo cáo bài viết này',
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(color: Colors.white10, height: 1),
+              ...reasons.map((reason) {
+                return ListTile(
+                  title: Text(reason, style: const TextStyle(color: Colors.white)),
+                  onTap: () => Navigator.pop(context, reason),
+                );
+              }).toList(),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selectedReason == null) return;
+
+    if (selectedReason == 'Khác') {
+      _showCustomReasonDialog();
+    } else if (selectedReason.isNotEmpty) {
+      _submitReportAndHide(selectedReason, null);
+    }
+  }
+
+  void _submitReportAndHide(String reason, String? customReason) async {
+    // Mô phỏng việc gửi báo cáo đến Firestore/Backend
+    // Bạn có thể thêm logic lưu report vào collection 'reports' tại đây
+
+    // Ẩn bài viết và lưu trạng thái
+    if (mounted) {
+      setState(() {
+        _isCurrentlyHidden = true;
+        _hiddenReason = 'Đã báo cáo ($reason)';
+      });
+      _saveHiddenState(true, 'Đã báo cáo ($reason)');
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Cảm ơn bạn đã báo cáo. Bài viết này đã được ẩn.'),
+        backgroundColor: coralRed,
+        duration: Duration(seconds: 3),
+      ));
+    }
+  }
+
+  // --- LOGIC ẨN/HOÀN TÁC MỚI ---
+
+  void _undoHide() {
+    if (mounted) {
+      setState(() {
+        _isCurrentlyHidden = false;
+        _hiddenReason = null;
+      });
+      _saveHiddenState(false, null);
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Đã hoàn tác. Bài viết được khôi phục.'),
+        backgroundColor: sonicSilver,
+      ));
+    }
+  }
+
+  Widget _buildUndoWidget() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // THAY ĐỔI: Thêm margin
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      decoration: BoxDecoration(
+        color: darkSurface,
+        borderRadius: BorderRadius.circular(12.0),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Text(
+              'Bài viết đã bị ẩn. ${_hiddenReason != null ? '($_hiddenReason)' : ''}',
+              style: const TextStyle(color: sonicSilver, fontSize: 14),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          TextButton(
+            onPressed: _undoHide,
+            child: const Text('Hoàn tác', style: TextStyle(color: topazColor, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
+
 
   Widget _buildMoreOptionsButton(BuildContext context) {
     final bool isMyPost = widget.postData['uid'] == _currentUser?.uid;
+    final String targetUserId = widget.postData['uid'] as String? ?? '';
+    final bool isPostOwner = targetUserId == _currentUser?.uid;
+    final bool canUnfollow = !isPostOwner && targetUserId.isNotEmpty;
+
     List<PopupMenuItem<String>> items = [
       const PopupMenuItem<String>(value: 'report', child: Text('Báo cáo bài viết')),
       const PopupMenuItem<String>(value: 'hide', child: Text('Ẩn bài viết này')),
-      const PopupMenuItem<String>(value: 'unfollow', child: Text('Bỏ theo dõi người này')),
     ];
+
+    if (canUnfollow) {
+      items.add(const PopupMenuItem<String>(value: 'unfollow', child: Text('Bỏ theo dõi người này')));
+    }
+
     if (isMyPost) {
       items.insert(0, const PopupMenuItem<String>(value: 'delete', child: Text('Xóa bài viết', style: TextStyle(color: coralRed))));
       items.insert(1, const PopupMenuItem<String>(value: 'edit', child: Text('Chỉnh sửa bài viết')));
@@ -1015,8 +1323,22 @@ class _PostCardState extends State<PostCard> {
     return PopupMenuButton<String>(
       itemBuilder: (BuildContext context) => items,
       onSelected: (String value) {
-        if (value == 'delete') {
-          _deletePost();
+        switch (value) {
+          case 'delete':
+            _deletePost();
+            break;
+          case 'edit':
+            _editPost();
+            break;
+          case 'report':
+            _reportPost();
+            break;
+          case 'hide':
+            _hidePost();
+            break;
+          case 'unfollow':
+            _unfollowUser();
+            break;
         }
       },
       // Đã đổi thành Icons.more_vert
@@ -1052,6 +1374,15 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
+
+    // ĐIỀU KIỆN CHÍNH: Nếu bài viết đang bị ẩn (được lưu trong local storage)
+    if (_isCurrentlyHidden) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: _buildUndoWidget(),
+      );
+    }
+
     final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
     final String? imageUrl = widget.postData['imageUrl'] as String?;
     final String userName = widget.postData['displayName'] as String? ?? 'Người dùng';
