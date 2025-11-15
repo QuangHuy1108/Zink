@@ -1,10 +1,10 @@
-
 // lib/search_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'profile_screen.dart';
+import 'profile_screen.dart' hide PostDetailScreen;
+import 'post_detail_screen.dart'; // <--- NEW IMPORT for navigation
 
 // --- Giả định các file và hằng số này tồn tại ---
 const Color topazColor = Color(0xFFF6C886);
@@ -13,22 +13,40 @@ const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C);
 const Color activeGreen = Color(0xFF32CD32);
 
-class PostCard extends StatelessWidget {
+// --- PostCard Placeholder ĐÃ BỊ LOẠI BỎ ---
+
+// --- NEW WIDGET: Post Grid Item ---
+class _PostGridItem extends StatelessWidget {
   final Map<String, dynamic> postData;
-  final VoidCallback onStateChange;
-  const PostCard({super.key, required this.postData, required this.onStateChange});
+  final Function(String postId, Map<String, dynamic> postData) onTap;
+
+  const _PostGridItem({required this.postData, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-      decoration: BoxDecoration(color: darkSurface, borderRadius: BorderRadius.circular(12)),
-      child: Text("Post: ${postData['postCaption'] ?? 'N/A'}", style: const TextStyle(color: Colors.white)),
+    final String postId = postData['id'] as String? ?? '';
+    final String? imageUrl = postData['imageUrl'] as String?;
+    final ImageProvider? imageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
+        ? NetworkImage(imageUrl)
+        : null;
+
+    return GestureDetector(
+      onTap: () => onTap(postId, postData),
+      child: Container(
+        decoration: BoxDecoration(
+          color: darkSurface,
+          image: imageProvider != null
+              ? DecorationImage(image: imageProvider, fit: BoxFit.cover)
+              : null,
+        ),
+        child: imageProvider == null
+            ? const Center(child: Icon(Icons.image_not_supported, color: sonicSilver, size: 30))
+            : null,
+      ),
     );
   }
 }
-// --- Kết thúc giả định ---
+// ---------------------------------
 
 
 class SearchScreen extends StatefulWidget {
@@ -84,7 +102,7 @@ class _SearchScreenState extends State<SearchScreen> {
         });
       }
     });
-     // Cập nhật query để rebuild UI (hiện nút clear)
+    // Cập nhật query để rebuild UI (hiện nút clear)
     setState(() {
       _searchQuery = _searchController.text;
     });
@@ -103,16 +121,29 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _navigateToProfile(Map<String, dynamic> userData) {
-      final targetUid = userData['uid'] as String?;
-      if (targetUid == null) return;
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (context) => ProfileScreen(
-          targetUserId: targetUid,
-          onNavigateToHome: () => Navigator.pop(context),
-          onLogout: () {},
-        ),
-      ));
+    final targetUid = userData['uid'] as String?;
+    if (targetUid == null) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => ProfileScreen(
+        targetUserId: targetUid,
+        onNavigateToHome: () => Navigator.pop(context),
+        onLogout: () {},
+      ),
+    ));
   }
+
+  // --- NEW FUNCTION: Navigate to Post Detail ---
+  void _navigateToPostDetail(String postId, Map<String, dynamic> postData) {
+    if (postId.isEmpty) return;
+    // Đảm bảo postData có 'id' trước khi truyền đi
+    postData['id'] = postId;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => PostDetailScreen(postData: postData),
+      ),
+    );
+  }
+  // ---------------------------------------------
 
   Future<void> _toggleFollow(Map<String, dynamic> targetUserData) async {
     final currentUserId = _currentUser?.uid;
@@ -147,7 +178,6 @@ class _SearchScreenState extends State<SearchScreen> {
     await writeBatch.commit();
   }
 
-// Dán hàm này vào file lib/search_screen.dart
   Future<void> _toggleFriendRequest(Map<String, dynamic> targetUserData) async {
     final currentUserId = _currentUser?.uid;
     final targetUserId = targetUserData['uid'] as String?;
@@ -157,7 +187,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
     final currentUserRef = _firestore.collection('users').doc(currentUserId);
     final targetUserRef = _firestore.collection('users').doc(targetUserId);
-    final theirNotifications = targetUserRef.collection('notifications'); // <-- Tham chiếu đến collection thông báo
+    final theirNotifications = targetUserRef.collection('notifications');
 
     try {
       if (isPending) {
@@ -198,7 +228,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'senderAvatarUrl': senderAvatarUrl,
           'timestamp': FieldValue.serverTimestamp(),
           'isRead': false,
-          'actionTaken': false, // <-- Thêm trường này để xử lý chấp nhận/từ chối
+          'actionTaken': false,
         });
       }
 
@@ -215,14 +245,14 @@ class _SearchScreenState extends State<SearchScreen> {
   }
   void _performSearch(String query) async {
     if (query.isEmpty) {
-        setState(() {
-            _userSearchResults = [];
-            _postSearchResults = [];
-            _isLoading = false;
-        });
-        return;
+      setState(() {
+        _userSearchResults = [];
+        _postSearchResults = [];
+        _isLoading = false;
+      });
+      return;
     }
-    
+
     _addRecentSearch(query);
     setState(() {
       _isLoading = true;
@@ -234,7 +264,7 @@ class _SearchScreenState extends State<SearchScreen> {
       if (currentUserId == null) return;
 
       final queryLower = query.toLowerCase();
-      
+
       final currentUserDoc = await _firestore.collection('users').doc(currentUserId).get();
       final currentUserFriendUids = List<String>.from(currentUserDoc.data()?['friendUids'] ?? []);
 
@@ -253,26 +283,30 @@ class _SearchScreenState extends State<SearchScreen> {
           final userData = doc.data() as Map<String, dynamic>;
           final targetUserFriendUids = List<String>.from(userData['friendUids'] ?? []);
           final mutualCount = targetUserFriendUids.where((uid) => currentUserFriendUids.contains(uid)).length;
-          
+
           userResultsMap[doc.id] = {...userData, 'uid': doc.id, 'mutual': mutualCount};
         }
       }
 
       final postSnapshots = [results[2] as QuerySnapshot, results[3] as QuerySnapshot];
       final Map<String, Map<String, dynamic>> postResultsMap = {};
+
+      // Kết hợp kết quả từ Tag và Tên tác giả, lọc trùng lặp
       for (final snapshot in postSnapshots) {
         for (final doc in snapshot.docs) {
-           final postData = doc.data() as Map<String, dynamic>;
+          final postData = doc.data() as Map<String, dynamic>;
           postResultsMap[doc.id] = {...postData, 'id': doc.id};
         }
       }
       final finalPostResults = postResultsMap.values.toList();
+
+      // Sắp xếp bài viết theo thời gian (mới nhất trước)
       finalPostResults.sort((a, b) {
         final aTime = (a['timestamp'] as Timestamp?)?.toDate() ?? DateTime(1970);
         final bTime = (b['timestamp'] as Timestamp?)?.toDate() ?? DateTime(1970);
         return bTime.compareTo(aTime);
       });
-      
+
       if (mounted) {
         setState(() {
           _userSearchResults = userResultsMap.values.toList();
@@ -318,9 +352,9 @@ class _SearchScreenState extends State<SearchScreen> {
             prefixIcon: Icon(Icons.search, color: sonicSilver.withOpacity(0.8)),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
-                    icon: const Icon(Icons.clear, color: sonicSilver),
-                    onPressed: () => _searchController.clear(),
-                  )
+              icon: const Icon(Icons.clear, color: sonicSilver),
+              onPressed: () => _searchController.clear(),
+            )
                 : null,
           ),
         ),
@@ -329,6 +363,7 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  // --- SỬ DỤNG CustomScrollView và SliverGrid ---
   Widget _buildBodyContent() {
     if (_searchQuery.isEmpty) {
       return _buildRecentSearches();
@@ -340,14 +375,16 @@ class _SearchScreenState extends State<SearchScreen> {
       return Center(child: Text('Không có kết quả cho "$_searchQuery"', style: const TextStyle(color: sonicSilver)));
     }
 
-    return ListView(
-      children: [
-        if (_userSearchResults.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text('Tài khoản', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          ),
-          ..._userSearchResults.map((user) => _UserSearchResultTile(
+    return CustomScrollView(
+      slivers: [
+        if (_userSearchResults.isNotEmpty)
+          SliverList(
+            delegate: SliverChildListDelegate([
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text('Tài khoản', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              ..._userSearchResults.map((user) => _UserSearchResultTile(
                 key: ValueKey(user['uid']),
                 userData: user,
                 currentUser: _currentUser,
@@ -355,14 +392,44 @@ class _SearchScreenState extends State<SearchScreen> {
                 onToggleFriend: _toggleFriendRequest,
                 onNavigateToProfile: () => _navigateToProfile(user),
               )),
-        ],
-        if (_postSearchResults.isNotEmpty) ...[
-           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-            child: Text('Bài viết', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 24), // Khoảng cách sau danh sách người dùng
+            ]),
           ),
-          ..._postSearchResults.map((post) => PostCard(postData: post, onStateChange: () {})),
-        ],
+
+        if (_postSearchResults.isNotEmpty)
+          SliverList(
+            delegate: SliverChildListDelegate([
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text('Bài viết', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+            ]),
+          ),
+
+        if (_postSearchResults.isNotEmpty)
+          SliverPadding( // Thêm padding xung quanh Grid
+            padding: const EdgeInsets.symmetric(horizontal: 0),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 1.0,
+                mainAxisSpacing: 1.0,
+                childAspectRatio: 1.0,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                  final post = _postSearchResults[index];
+                  return _PostGridItem( // <-- SỬ DỤNG WIDGET MỚI
+                    postData: post,
+                    onTap: _navigateToPostDetail,
+                  );
+                },
+                childCount: _postSearchResults.length,
+              ),
+            ),
+          ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 50)), // Padding dưới cùng
       ],
     );
   }
@@ -387,13 +454,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 leading: const Icon(Icons.history, color: sonicSilver),
                 title: Text(term, style: const TextStyle(color: Colors.white)),
                 trailing: IconButton(
-                    icon: const Icon(Icons.clear, color: sonicSilver, size: 20),
-                    onPressed: () {
-                        setState(() {
-                            _recentSearches.removeAt(index);
-                            // _saveRecentSearches(); // TODO
-                        });
-                    },
+                  icon: const Icon(Icons.clear, color: sonicSilver, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _recentSearches.removeAt(index);
+                      // _saveRecentSearches(); // TODO
+                    });
+                  },
                 ),
                 onTap: () {
                   _searchController.text = term;

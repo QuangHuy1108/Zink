@@ -69,7 +69,156 @@ const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color activeGreen = Color(0xFF32CD32);
 
+class EditPostScreen extends StatefulWidget {
+  final Map<String, dynamic> postData;
+  final Function(Map<String, dynamic> newData) onPostUpdated;
 
+  const EditPostScreen({
+    super.key,
+    required this.postData,
+    required this.onPostUpdated,
+  });
+
+  @override
+  State<EditPostScreen> createState() => _EditPostScreenState();
+}
+
+class _EditPostScreenState extends State<EditPostScreen> {
+  late TextEditingController _captionController;
+  late TextEditingController _tagsController;
+  late String _selectedPrivacy;
+  bool _isLoading = false;
+
+  final List<String> _privacyOptions = ['Công khai', 'Bạn bè', 'Chỉ mình tôi'];
+
+  @override
+  void initState() {
+    super.initState();
+    _captionController = TextEditingController(text: widget.postData['postCaption'] ?? '');
+
+    // Xử lý chuyển đổi List<String> tags thành chuỗi cho TextField
+    final List<String> initialTags = List<String>.from(widget.postData['tags'] ?? []);
+    _tagsController = TextEditingController(text: initialTags.join(', '));
+
+    _selectedPrivacy = widget.postData['privacy'] ?? 'Công khai';
+  }
+
+  @override
+  void dispose() {
+    _captionController.dispose();
+    _tagsController.dispose();
+    super.dispose();
+  }
+
+  void _saveChanges() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+
+    final String newCaption = _captionController.text.trim();
+
+    // Xử lý chuyển đổi chuỗi tag thành List<String>
+    final List<String> newTags = _tagsController.text.trim()
+        .toLowerCase()
+        .split(RegExp(r'[,\s]+'))
+        .where((tag) => tag.isNotEmpty)
+        .toList();
+
+    final Map<String, dynamic> updatedData = {
+      'postCaption': newCaption,
+      'tags': newTags,          // Gửi Tags mới
+      'privacy': _selectedPrivacy, // Gửi Privacy mới
+    };
+
+    widget.onPostUpdated(updatedData); // Gọi callback để update lên Firestore
+
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Chỉnh sửa Bài viết', style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.black,
+        actions: [
+          _isLoading
+              ? const Padding(padding: EdgeInsets.only(right: 16), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: topazColor))))
+              : TextButton(
+            onPressed: _saveChanges,
+            child: const Text('Lưu', style: TextStyle(color: topazColor, fontSize: 16)),
+          )
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 1. Chỉnh sửa Caption
+            TextField(
+              controller: _captionController,
+              maxLines: 5,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Chỉnh sửa chú thích...',
+                hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                filled: true,
+                fillColor: darkSurface,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // 2. Chỉnh sửa Tags
+            TextField(
+              controller: _tagsController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Chỉnh sửa tags (cách nhau bằng dấu phẩy)',
+                hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                filled: true,
+                fillColor: darkSurface,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // 3. Hiển thị Ảnh (Nếu có)
+            if (widget.postData['imageUrl'] != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 20.0),
+                child: Image.network(
+                  widget.postData['imageUrl'] as String,
+                  fit: BoxFit.cover,
+                  height: 200,
+                  width: double.infinity,
+                ),
+              ),
+
+            // 4. Chỉnh sửa Quyền riêng tư
+            const Text('Quyền riêng tư:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 10),
+            ..._privacyOptions.map((privacy) => RadioListTile<String>(
+              title: Text(privacy, style: const TextStyle(color: Colors.white)),
+              value: privacy,
+              groupValue: _selectedPrivacy,
+              onChanged: (newValue) {
+                if (newValue != null) {
+                  setState(() { _selectedPrivacy = newValue; });
+                }
+              },
+              activeColor: topazColor,
+              contentPadding: EdgeInsets.zero,
+            )).toList(),
+          ],
+        ),
+      ),
+    );
+  }
+}
 // =======================================================
 // WIDGET CHUÔNG THÔNG BÁO
 // =======================================================
@@ -1023,11 +1172,40 @@ class _PostCardState extends State<PostCard> {
 
   // Chức năng 2. Chỉnh sửa bài viết (Mô phỏng)
   void _editPost() {
-    // TODO: Triển khai logic điều hướng đến EditPostScreen
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chức năng Chỉnh sửa bài viết chưa được triển khai.')));
-    }
+    if (widget.postData['uid'] != _currentUser?.uid || _postId.isEmpty) return;
+
+    // Điều hướng đến màn hình chỉnh sửa
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => EditPostScreen(
+        postData: widget.postData,
+        onPostUpdated: (newData) async {
+          // Cập nhật lên Firestore và cập nhật State cục bộ
+          try {
+            // Bắt đầu cập nhật lên Firestore
+            await _firestore.collection('posts').doc(_postId).update({
+              'postCaption': newData['postCaption'],
+              'tags': newData['tags'],       // <-- CẬP NHẬT TAGS
+              'privacy': newData['privacy'], // <-- CẬP NHẬT PRIVACY
+              'timestamp': FieldValue.serverTimestamp(),
+            });
+
+            if (mounted) {
+              // Cập nhật lại UI của PostCard ngay lập tức
+              setState(() {
+                widget.postData['postCaption'] = newData['postCaption'];
+                widget.postData['tags'] = newData['tags'];      // Cập nhật state tags
+                widget.postData['privacy'] = newData['privacy']; // Cập nhật state privacy
+                _updateStateFromWidget();
+              });
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bài viết đã được cập nhật.'), backgroundColor: activeGreen));
+            }
+          } catch (e) {
+            print("Lỗi cập nhật bài viết: $e");
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Cập nhật bài viết không thành công.'), backgroundColor: coralRed));
+          }
+        },
+      ),
+    ));
   }
 
   // Chức năng 3. Báo cáo bài viết (Hoàn thiện logic mới)
@@ -1198,32 +1376,31 @@ class _PostCardState extends State<PostCard> {
       backgroundColor: darkSurface,
       builder: (BuildContext context) {
         return Container(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom), // Dùng padding.bottom thay vì viewInsets
+          // BỎ DÒNG padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Padding(
                 padding: EdgeInsets.all(16.0),
-                child: Text(
-                  'Báo cáo bài viết này',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                ),
+// ... (Title)
               ),
               const Divider(color: Colors.white10, height: 1),
+              // Thay thế List với ListView.builder để xử lý cuộn tốt hơn nếu có nhiều lý do.
               ...reasons.map((reason) {
                 return ListTile(
                   title: Text(reason, style: const TextStyle(color: Colors.white)),
                   onTap: () => Navigator.pop(context, reason),
                 );
               }).toList(),
-              const SizedBox(height: 10),
+              // THÊM: Padding dưới cùng để xử lý vùng an toàn của notch/thanh điều hướng
+              SizedBox(height: MediaQuery.of(context).padding.bottom),
+              // BỎ DÒNG const SizedBox(height: 10),
             ],
           ),
         );
       },
     );
-
     if (selectedReason == null) return;
 
     if (selectedReason == 'Khác') {
@@ -1272,33 +1449,182 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
-  Widget _buildUndoWidget() {
+  Widget _buildPostContent() {
+    final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
+    final String? imageUrl = widget.postData['imageUrl'] as String?;
+    final String userName = widget.postData['displayName'] as String? ?? 'Người dùng';
+    final String locationTime = widget.postData['locationTime'] as String? ?? '';
+    final String caption = widget.postData['postCaption'] as String? ?? '';
+
+    // --- LOGIC BÀI VIẾT CHIA SẺ ---
+    final String? sharedPostId = widget.postData['sharedPostId'] as String?;
+    final String? shareThoughts = widget.postData['shareThoughts'] as String?;
+    final bool isSharedPost = sharedPostId != null && sharedPostId.isNotEmpty;
+    final String shareMessage = isSharedPost ? caption : '';
+    final String displayCaption = isSharedPost ? (shareThoughts ?? '') : caption;
+    // --- KẾT THÚC LOGIC BÀI VIẾT CHIA SẺ ---
+
+    final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
+        ? NetworkImage(imageUrl) : null;
+    final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+        ? NetworkImage(avatarUrl) : null;
+    final List<String> postTags = List<String>.from(widget.postData['tags'] ?? []);
+
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // THAY ĐỔI: Thêm margin
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-      decoration: BoxDecoration(
-        color: darkSurface,
-        borderRadius: BorderRadius.circular(12.0),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.only(bottom: 0),
+      color: Colors.black,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              'Bài viết đã bị ẩn. ${_hiddenReason != null ? '($_hiddenReason)' : ''}',
-              style: const TextStyle(color: sonicSilver, fontSize: 14),
-              overflow: TextOverflow.ellipsis,
+          Padding(
+            padding: const EdgeInsets.only(left: 0.0, bottom: 12.0, right: 0.0, top: 10.0),
+            child: Row(
+              children: [
+                GestureDetector(
+                    onTap: () => _navigateToProfile(userName),
+                    child: CircleAvatar(
+                      radius: 18, backgroundColor: darkSurface,
+                      backgroundImage: avatarImageProvider,
+                      child: avatarImageProvider == null ? const Icon(Icons.person, size: 18, color: sonicSilver) : null,
+                    )
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _navigateToProfile(userName),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (isSharedPost && shareMessage.isNotEmpty)
+                          Builder(
+                            builder: (context) {
+                              final String sharingName = userName;
+                              final RegExp regex = RegExp(r"đã chia sẻ bài viết của (.*)\.");
+                              final match = regex.firstMatch(shareMessage);
+                              String originalOwnerName = '';
+                              String middleText = shareMessage;
+
+                              if (match != null) {
+                                originalOwnerName = match.group(1)!.trim();
+                                final startIndexOfMiddle = shareMessage.indexOf(sharingName) + sharingName.length;
+                                final endIndexOfMiddle = shareMessage.indexOf(originalOwnerName);
+                                if (endIndexOfMiddle > startIndexOfMiddle) {
+                                  middleText = shareMessage.substring(startIndexOfMiddle, endIndexOfMiddle).trim();
+                                } else {
+                                  middleText = shareMessage.substring(sharingName.length).replaceAll(originalOwnerName, '').replaceAll('.', '').trim();
+                                }
+                              } else {
+                                middleText = shareMessage.substring(sharingName.length).trim();
+                              }
+
+                              return RichText(
+                                text: TextSpan(
+                                  style: TextStyle(color: sonicSilver.withOpacity(0.9), fontSize: 13),
+                                  children: <TextSpan>[
+                                    TextSpan(text: sharingName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
+                                    TextSpan(text: ' $middleText ', style: TextStyle(fontWeight: FontWeight.w500, color: sonicSilver.withOpacity(0.9), fontSize: 14)),
+                                    TextSpan(text: originalOwnerName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
+                                    const TextSpan(text: '.', style: TextStyle(fontWeight: FontWeight.w500, color: Colors.white, fontSize: 14)),
+                                  ],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              );
+                            },
+                          )
+                        else
+                          Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+
+                        if (locationTime.isNotEmpty)
+                          Row(
+                            children: [
+                              Text(locationTime, style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12)),
+                              const SizedBox(width: 8), // Khoảng cách giữa thời gian và quyền riêng tư
+                              _buildPrivacyIcon(widget.postData['privacy'] ?? 'Công khai'), // <-- GỌI HÀM MỚI
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                _buildMoreOptionsButton(context),
+              ],
             ),
           ),
-          TextButton(
-            onPressed: _undoHide,
-            child: const Text('Hoàn tác', style: TextStyle(color: topazColor, fontWeight: FontWeight.bold)),
-          )
+
+          if (displayCaption.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
+              child: Text(displayCaption, style: const TextStyle(color: Colors.white, fontSize: 15)),
+            ),
+          if (postTags.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
+              child: Wrap(
+                spacing: 6.0,
+                runSpacing: 4.0,
+                children: postTags.map((tag) => Text(
+                  '#$tag',
+                  style: const TextStyle(color: topazColor, fontSize: 14, fontWeight: FontWeight.bold),
+                )).toList(),
+              ),
+            ),
+
+          GestureDetector(
+            onDoubleTap: _toggleLike,
+            onTap: () { /* Navigate to PostDetailScreen */ },
+            child: AspectRatio(
+              aspectRatio: 1.0,
+              child: Container(
+                decoration: const BoxDecoration(borderRadius: BorderRadius.zero, color: darkSurface),
+                child: postImageProvider != null
+                    ? Image(
+                  image: postImageProvider, fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: sonicSilver, size: 40)),
+                )
+                    : const Center(child: Icon(Icons.image_not_supported, color: sonicSilver, size: 50)),
+              ),
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.only(top: 10.0, left: 0.0, right: 0.0, bottom: 10.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _buildInteractionButton(icon: _isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? coralRed : sonicSilver, count: _likesCount, onTap: _toggleLike),
+                    const SizedBox(width: 20),
+                    _buildInteractionButton(icon: Icons.chat_bubble_outline_rounded, color: sonicSilver, count: _commentsCount, onTap: () => _showCommentSheet(context)),
+                    const SizedBox(width: 20),
+                    _buildInteractionButton(icon: Icons.send_rounded, color: sonicSilver, count: _sharesCount, onTap: () => _showShareSheet(context)),
+                    const Spacer(),
+                    IconButton(
+                      icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 28),
+                      onPressed: _toggleSave,
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(), splashRadius: 24,
+                    ),
+                  ],
+                ),
+                if (_likesCount > 0) ... [
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4.0),
+                    child: Text(
+                      '$_likesCount lượt thích',
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  )
+                ]
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
-
 
   Widget _buildMoreOptionsButton(BuildContext context) {
     final bool isMyPost = widget.postData['uid'] == _currentUser?.uid;
@@ -1372,200 +1698,93 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
+  Widget _buildPrivacyIcon(String privacy) {
+    IconData icon;
+    String text;
+
+    switch (privacy) {
+      case 'Công khai':
+        icon = Icons.public;
+        text = 'Công khai';
+        break;
+      case 'Bạn bè':
+        icon = Icons.people_alt_outlined;
+        text = 'Bạn bè';
+        break;
+      case 'Chỉ mình tôi':
+        icon = Icons.lock;
+        text = 'Riêng tư';
+        break;
+      default:
+        icon = Icons.public;
+        text = 'Công khai';
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: sonicSilver.withOpacity(0.8), size: 12),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
 
-    // ĐIỀU KIỆN CHÍNH: Nếu bài viết đang bị ẩn (được lưu trong local storage)
+    // Nếu bị ẩn, chúng ta vẫn render nội dung gốc và đè lớp phủ lên bằng Stack
     if (_isCurrentlyHidden) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-        child: _buildUndoWidget(),
+      return Container(
+        // Giữ nguyên margin/padding của PostCard gốc (Container)
+        margin: EdgeInsets.zero,
+        padding: const EdgeInsets.only(bottom: 0),
+        color: Colors.black, // Đảm bảo nền đen
+        child: Stack(
+          children: [
+            // 1. Lớp nền: Bài viết gốc
+            _buildPostContent(),
+
+            // 2. Lớp phủ mờ + Chữ "Hoàn tác" (giữ nguyên kích thước List Item)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.85),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Bài viết đã bị ẩn. ${_hiddenReason != null ? '($_hiddenReason)' : ''}',
+                        style: const TextStyle(color: sonicSilver, fontSize: 16),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        onPressed: _undoHide,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: darkSurface,
+                          foregroundColor: topazColor,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(color: topazColor)
+                          ),
+                        ),
+                        child: const Text('Hoàn tác', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
-    final String? avatarUrl = widget.postData['userAvatarUrl'] as String?;
-    final String? imageUrl = widget.postData['imageUrl'] as String?;
-    final String userName = widget.postData['displayName'] as String? ?? 'Người dùng';
-    final String locationTime = widget.postData['locationTime'] as String? ?? '';
-    final String tag = widget.postData['tag'] as String? ?? '';
-    final String caption = widget.postData['postCaption'] as String? ?? '';
-
-    // --- LOGIC BÀI VIẾT CHIA SẺ (Làm nổi bật 2 tên) ---
-    final String? sharedPostId = widget.postData['sharedPostId'] as String?;
-    final String? shareThoughts = widget.postData['shareThoughts'] as String?;
-
-    final bool isSharedPost = sharedPostId != null && sharedPostId.isNotEmpty;
-    final String shareMessage = isSharedPost ? caption : '';
-    final String displayCaption = isSharedPost ? (shareThoughts ?? '') : caption;
-    // --- KẾT THÚC LOGIC BÀI VIẾT CHIA SẺ ---
-
-
-    final ImageProvider? postImageProvider = (imageUrl != null && imageUrl.isNotEmpty && imageUrl.startsWith('http'))
-        ? NetworkImage(imageUrl) : null;
-    final ImageProvider? avatarImageProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
-        ? NetworkImage(avatarUrl) : null;
-
-    return Container(
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.only(bottom: 0),
-      color: Colors.black,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 0.0, bottom: 12.0, right: 0.0, top: 10.0),
-            child: Row(
-              children: [
-                GestureDetector(
-                    onTap: () => _navigateToProfile(userName),
-                    child: CircleAvatar(
-                      radius: 18, backgroundColor: darkSurface,
-                      backgroundImage: avatarImageProvider,
-                      child: avatarImageProvider == null ? const Icon(Icons.person, size: 18, color: sonicSilver) : null,
-                    )
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => _navigateToProfile(userName),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // --- PHẦN RICHTEXT ĐÃ CHỈNH SỬA: GỘP HẾT VÀO 1 KHỐI 2 DÒNG ---
-                        if (isSharedPost && shareMessage.isNotEmpty)
-                          Builder(
-                            builder: (context) {
-                              final String sharingName = userName;
-
-                              final RegExp regex = RegExp(r"đã chia sẻ bài viết của (.*)\.");
-                              final match = regex.firstMatch(shareMessage);
-
-                              String originalOwnerName = '';
-                              String middleText = shareMessage;
-
-                              if (match != null) {
-                                originalOwnerName = match.group(1)!.trim();
-
-                                final startIndexOfMiddle = shareMessage.indexOf(sharingName) + sharingName.length;
-                                final endIndexOfMiddle = shareMessage.indexOf(originalOwnerName);
-                                if (endIndexOfMiddle > startIndexOfMiddle) {
-                                  middleText = shareMessage.substring(startIndexOfMiddle, endIndexOfMiddle).trim();
-                                } else {
-                                  middleText = shareMessage.substring(sharingName.length).replaceAll(originalOwnerName, '').replaceAll('.', '').trim();
-                                }
-                              } else {
-                                middleText = shareMessage.substring(sharingName.length).trim();
-                              }
-
-                              return RichText(
-                                text: TextSpan(
-                                  // Base style cho phần giữa
-                                  style: TextStyle(color: sonicSilver.withOpacity(0.9), fontSize: 13),
-                                  children: <TextSpan>[
-                                    // 1. Tên người chia sẻ (IN ĐẬM, MÀU TRẮNG)
-                                    TextSpan(
-                                      text: sharingName,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
-                                    ),
-                                    // 2. Phần văn bản giữa
-                                    TextSpan(
-                                      text: ' $middleText ',
-                                      style: TextStyle(fontWeight: FontWeight.w500, color: sonicSilver.withOpacity(0.9), fontSize: 14),
-                                    ),
-                                    // 3. Tên chủ bài viết gốc (IN ĐẬM, MÀU TRẮNG)
-                                    TextSpan(
-                                      text: originalOwnerName,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
-                                    ),
-                                    // 4. Dấu chấm cuối cùng
-                                    const TextSpan(
-                                      text: '.',
-                                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.white, fontSize: 14),
-                                    ),
-                                  ],
-                                ),
-                                maxLines: 1, // VẪN GIỮ 1 DÒNG
-                                overflow: TextOverflow.ellipsis, // SẼ CẮT DÙNG ... NẾU QUÁ DÀI
-                              );
-                            },
-                          )
-                        else
-                        // Chỉ hiển thị tên khi không phải bài chia sẻ (logic cũ)
-                          Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
-                        // --- KẾT THÚC PHẦN RICHTEXT ---
-
-                        // HIỂN THỊ THỜI GIAN LUÔN Ở DÒNG DƯỚI
-                        if (locationTime.isNotEmpty)
-                          Text(locationTime, style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                ),
-                // --- PHẦN ĐÃ SỬA: XÓA SPACER VÀ GIỮ NÚT ---
-                _buildMoreOptionsButton(context),
-              ],
-            ),
-          ),
-
-          // Hiển thị chú thích/cảm nghĩ (displayCaption)
-          if (displayCaption.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 0.0, bottom: 8.0, right: 0.0),
-              child: Text(displayCaption, style: const TextStyle(color: Colors.white, fontSize: 15)),
-            ),
-
-          GestureDetector(
-            onDoubleTap: _toggleLike,
-            onTap: () { /* Navigate to PostDetailScreen */ },
-            child: AspectRatio(
-              aspectRatio: 1.0,
-              child: Container(
-                decoration: const BoxDecoration(borderRadius: BorderRadius.zero, color: darkSurface),
-                child: postImageProvider != null
-                    ? Image(
-                  image: postImageProvider, fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: sonicSilver, size: 40)),
-                )
-                    : const Center(child: Icon(Icons.image_not_supported, color: sonicSilver, size: 50)),
-              ),
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.only(top: 10.0, left: 0.0, right: 0.0, bottom: 10.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _buildInteractionButton(icon: _isLiked ? Icons.favorite : Icons.favorite_border, color: _isLiked ? coralRed : sonicSilver, count: _likesCount, onTap: _toggleLike),
-                    const SizedBox(width: 20),
-                    _buildInteractionButton(icon: Icons.chat_bubble_outline_rounded, color: sonicSilver, count: _commentsCount, onTap: () => _showCommentSheet(context)),
-                    const SizedBox(width: 20),
-                    _buildInteractionButton(icon: Icons.send_rounded, color: sonicSilver, count: _sharesCount, onTap: () => _showShareSheet(context)),
-                    const Spacer(),
-                    IconButton(
-                      icon: Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? topazColor : sonicSilver, size: 28),
-                      onPressed: _toggleSave,
-                      padding: EdgeInsets.zero, constraints: const BoxConstraints(), splashRadius: 24,
-                    ),
-                  ],
-                ),
-                if (_likesCount > 0) ... [
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4.0),
-                    child: Text(
-                      '$_likesCount lượt thích',
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                  )
-                ]
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+    // Trạng thái hiển thị: Trả về PostCard gốc
+    return _buildPostContent();
   }
 }

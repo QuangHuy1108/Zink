@@ -160,6 +160,8 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
         // SỬ DỤNG CHÚ THÍCH MỚI
         'postCaption': newCaption,
         'sharedPostId': widget.postId,
+        'originalPostOwnerId': postOwnerId,       // <-- THÊM DÒNG NÀY
+        'originalPostOwnerName': originalPostOwnerName, // <-- THÊM DÒNG NÀY
         'imageUrl': null,
         // BỔ SUNG: NẾU BẠN MUỐN LƯU THÊM PHẦN SUY NGHĨ (thoughts) VÀO TRƯỜNG KHÁC, BẠN CÓ THỂ LÀM Ở ĐÂY:
         'shareThoughts': thoughts.isEmpty ? null : thoughts, // LƯU TƯ DUY NẾU CÓ
@@ -199,7 +201,9 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       print("Lỗi khi chia sẻ bài viết: $e");
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi khi chia sẻ bài viết.'), backgroundColor: coralRed));
     }
-  }  Widget _buildShareToProfileSection() {
+  }
+
+  Widget _buildShareToProfileSection() {
     // Lấy avatar user hiện tại (URL hoặc null)
     final String? currentUserAvatarUrl = _currentUser?.photoURL;
     final ImageProvider? avatarProvider = (currentUserAvatarUrl != null && currentUserAvatarUrl.isNotEmpty)
