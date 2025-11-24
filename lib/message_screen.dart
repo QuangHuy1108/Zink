@@ -78,6 +78,7 @@ class _MessageScreenState extends State<MessageScreen> {
         title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.black,
         elevation: 0.5,
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _buildBody(),
     );
@@ -208,6 +209,25 @@ class _ConversationViewState extends State<_ConversationView> {
     }
   }
 
+  // Mark messages as read if they are from the other person and currently unread
+  void _markMessagesAsRead(List<QueryDocumentSnapshot> docs) {
+    final unreadDocs = docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      return (data['senderId'] != widget.currentUser.uid) && (data['isRead'] == false);
+    }).toList();
+
+    if (unreadDocs.isNotEmpty) {
+      // Use addPostFrameCallback to avoid calling setState or Firestore updates during build
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        final batch = _firestore.batch();
+        for (var doc in unreadDocs) {
+          batch.update(doc.reference, {'isRead': true});
+        }
+        batch.commit().catchError((_) {}); // Ignore errors for background update
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -228,19 +248,54 @@ class _ConversationViewState extends State<_ConversationView> {
                 return Center(child: Text('Bắt đầu cuộc trò chuyện với ${widget.targetUserName}!', style: const TextStyle(color: sonicSilver)));
               }
 
+              _markMessagesAsRead(messages);
+
               return ListView.builder(
                 reverse: true,
                 controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
                 itemCount: messages.length,
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 itemBuilder: (context, index) {
                   final data = messages[index].data() as Map<String, dynamic>;
-                  return _MessageBubble(
+                  final currentMsgTimestamp = data['timestamp'] as Timestamp? ?? Timestamp.now();
+                  final DateTime currentDate = currentMsgTimestamp.toDate();
+
+                  bool showDateHeader = false;
+                  // Determine if we need a date header.
+                  // Since list is reversed (0 is newest), we look at index + 1 (older message)
+                  if (index == messages.length - 1) {
+                    showDateHeader = true; // Always show date for the very first message (last in reversed list)
+                  } else {
+                    final nextData = messages[index + 1].data() as Map<String, dynamic>;
+                    final nextMsgTimestamp = nextData['timestamp'] as Timestamp? ?? Timestamp.now();
+                    final DateTime nextDate = nextMsgTimestamp.toDate();
+
+                    // Check if day, month, or year is different
+                    if (currentDate.day != nextDate.day || currentDate.month != nextDate.month || currentDate.year != nextDate.year) {
+                      showDateHeader = true;
+                    }
+                  }
+
+                  final bubble = _MessageBubble(
                     senderId: data['senderId'] ?? '',
                     text: data['text'] ?? '',
-                    timestamp: data['timestamp'] ?? Timestamp.now(),
+                    timestamp: currentMsgTimestamp,
                     isMe: (data['senderId'] ?? '') == widget.currentUser.uid,
+                    isRead: data['isRead'] ?? false,
                   );
+
+                  if (showDateHeader) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _DateHeader(date: currentDate),
+                        bubble,
+                      ],
+                    );
+                  }
+
+                  return bubble;
                 },
               );
             },
@@ -253,32 +308,87 @@ class _ConversationViewState extends State<_ConversationView> {
 
   Widget _buildMessageInput() {
     return Container(
-      padding: EdgeInsets.only(left: 16, right: 16, top: 8, bottom: MediaQuery.of(context).padding.bottom + 8),
-      color: darkSurface.withOpacity(0.5),
+      padding: EdgeInsets.only(left: 12, right: 12, top: 8, bottom: MediaQuery.of(context).padding.bottom + 8),
+      decoration: BoxDecoration(
+        color: darkSurface,
+        border: Border(top: BorderSide(color: sonicSilver.withOpacity(0.2))),
+      ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
-            child: TextField(
-              controller: _messageController,
-              onSubmitted: (_) => _sendMessage(),
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Nhập tin nhắn...',
-                hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
-                filled: true,
-                fillColor: darkSurface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[900],
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: TextField(
+                controller: _messageController,
+                minLines: 1,
+                maxLines: 4,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Nhập tin nhắn...',
+                  hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  isDense: true,
+                ),
               ),
             ),
           ),
           const SizedBox(width: 8),
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: topazColor,
-            child: IconButton(icon: const Icon(Icons.send, color: Colors.black, size: 20), onPressed: _sendMessage),
+          GestureDetector(
+            onTap: _sendMessage,
+            child: CircleAvatar(
+              radius: 20,
+              backgroundColor: topazColor,
+              child: const Icon(Icons.send, color: Colors.black, size: 18),
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// =======================================================
+// Date Header Widget
+// =======================================================
+class _DateHeader extends StatelessWidget {
+  final DateTime date;
+  const _DateHeader({required this.date});
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final dateToCheck = DateTime(date.year, date.month, date.day);
+
+    String text;
+    if (dateToCheck == today) {
+      text = 'Hôm nay';
+    } else if (dateToCheck == yesterday) {
+      text = 'Hôm qua';
+    } else {
+      text = '${date.day} tháng ${date.month}, ${date.year}';
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey[800]?.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            text,
+            style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+          ),
+        ),
       ),
     );
   }
@@ -292,33 +402,67 @@ class _MessageBubble extends StatelessWidget {
   final String text;
   final Timestamp timestamp;
   final bool isMe;
+  final bool isRead;
 
-  const _MessageBubble({required this.senderId, required this.text, required this.timestamp, required this.isMe});
+  const _MessageBubble({
+    required this.senderId,
+    required this.text,
+    required this.timestamp,
+    required this.isMe,
+    this.isRead = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final String timeString = TimeOfDay.fromDateTime(timestamp.toDate()).format(context);
+    final String timeString = "${timestamp.toDate().hour.toString().padLeft(2, '0')}:${timestamp.toDate().minute.toString().padLeft(2, '0')}";
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+        margin: const EdgeInsets.symmetric(vertical: 2),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
-          color: isMe ? topazColor.withOpacity(0.9) : darkSurface,
+          color: isMe ? topazColor : darkSurface,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(15),
-            topRight: const Radius.circular(15),
-            bottomLeft: isMe ? const Radius.circular(15) : Radius.zero,
-            bottomRight: isMe ? Radius.zero : const Radius.circular(15),
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: isMe ? const Radius.circular(18) : const Radius.circular(2),
+            bottomRight: isMe ? const Radius.circular(2) : const Radius.circular(18),
           ),
         ),
         child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(text, style: TextStyle(color: isMe ? Colors.black : Colors.white)),
+            Text(
+              text,
+              style: TextStyle(
+                color: isMe ? Colors.black : Colors.white,
+                fontSize: 15,
+              ),
+            ),
             const SizedBox(height: 4),
-            Text(timeString, style: TextStyle(color: isMe ? Colors.black.withOpacity(0.6) : sonicSilver, fontSize: 10)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  timeString,
+                  style: TextStyle(
+                    color: isMe ? Colors.black54 : Colors.white38,
+                    fontSize: 10,
+                  ),
+                ),
+                if (isMe) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    isRead ? Icons.done_all : Icons.check,
+                    size: 12,
+                    color: isRead ? Colors.blue[800] : Colors.black54,
+                  )
+                ]
+              ],
+            ),
           ],
         ),
       ),
@@ -353,19 +497,23 @@ class _ChatListItemState extends State<_ChatListItem> {
 
   Future<void> _fetchOtherUserData() async {
     if (_currentUser == null) return;
-    if (!mounted) return; // Add guard
+    if (!mounted) return;
 
     final data = widget.chatDoc.data() as Map<String, dynamic>;
     final List<dynamic> participants = data['participants'];
     final String otherUserId = participants.firstWhere((id) => id != _currentUser!.uid, orElse: () => '');
 
     if (otherUserId.isNotEmpty) {
-      final userDoc = await _firestore.collection('users').doc(otherUserId).get();
-      if (mounted) {
-        setState(() {
-          _otherUserDoc = userDoc;
-          _isLoading = false;
-        });
+      try {
+        final userDoc = await _firestore.collection('users').doc(otherUserId).get();
+        if (mounted) {
+          setState(() {
+            _otherUserDoc = userDoc;
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _isLoading = false);
       }
     } else {
       if (mounted) {
@@ -376,21 +524,32 @@ class _ChatListItemState extends State<_ChatListItem> {
     }
   }
 
-  // Refresh data when navigating back
   void _onNavigateBack() {
     _fetchOtherUserData();
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const ListTile(
-        title: Text('Đang tải...', style: TextStyle(color: sonicSilver)),
-        subtitle: Text('...', style: TextStyle(color: sonicSilver)),
-        leading: CircleAvatar(radius: 25, backgroundColor: darkSurface),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+        child: Row(
+          children: [
+            const CircleAvatar(radius: 25, backgroundColor: darkSurface),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(width: 100, height: 14, color: darkSurface),
+                const SizedBox(height: 6),
+                Container(width: 150, height: 12, color: darkSurface),
+              ],
+            )
+          ],
+        ),
       );
     }
+
     if (_otherUserDoc == null || !_otherUserDoc!.exists) {
       return const SizedBox.shrink(); // Or a placeholder for a deleted user
     }
@@ -398,7 +557,12 @@ class _ChatListItemState extends State<_ChatListItem> {
     final userData = _otherUserDoc!.data() as Map<String, dynamic>;
     final String targetUserName = userData['displayName'] ?? 'Người dùng';
     final String? targetAvatarUrl = userData['photoURL'] as String?;
-    final String lastMessage = (widget.chatDoc.data() as Map<String, dynamic>)['lastMessage'] ?? '';
+    final chatData = widget.chatDoc.data() as Map<String, dynamic>;
+    final String lastMessage = chatData['lastMessage'] ?? '';
+
+    // TÍNH TOÁN SỐ TIN NHẮN CHƯA ĐỌC
+    final int unreadCount = chatData['unreadCount'] is Map ? (chatData['unreadCount'][_currentUser!.uid] as int? ?? 0) : 0;
+    final bool hasUnread = unreadCount > 0;
 
     return ListTile(
       leading: CircleAvatar(
@@ -409,8 +573,32 @@ class _ChatListItemState extends State<_ChatListItem> {
             ? Text(targetUserName.isNotEmpty ? targetUserName[0].toUpperCase() : 'U', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
             : null,
       ),
-      title: Text(targetUserName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      subtitle: Text(lastMessage, style: const TextStyle(color: sonicSilver), maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+          targetUserName,
+          style: TextStyle(
+              color: Colors.white,
+              fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal // BOLD TÊN NẾU CÓ TIN CHƯA ĐỌC
+          )
+      ),
+      subtitle: Text(
+          lastMessage,
+          style: TextStyle(
+              color: hasUnread ? Colors.white : sonicSilver, // MÀU TRẮNG NẾU CHƯA ĐỌC
+              fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis
+      ),
+      trailing: hasUnread
+          ? Container(
+        padding: const EdgeInsets.all(6),
+        decoration: const BoxDecoration(color: topazColor, shape: BoxShape.circle),
+        child: Text(
+          unreadCount > 9 ? '9+' : unreadCount.toString(),
+          style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
+        ),
+      )
+          : null, // Không hiển thị gì nếu đã đọc
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(builder: (context) => MessageScreen(targetUserId: _otherUserDoc!.id, targetUserName: targetUserName)),
