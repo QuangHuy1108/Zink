@@ -8,6 +8,9 @@ const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C);
+const Color whiteColor = Colors.white; // <-- FIXED: Thêm hằng số màu
+const Color blackColor = Colors.black; // <-- FIXED: Thêm hằng số màu
+
 
 // =======================================================
 // Main Screen Widget (Router)
@@ -59,6 +62,7 @@ class _MessageScreenState extends State<MessageScreen> {
         'lastMessage': '',
         'lastMessageTimestamp': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
+        'unreadCount': {}, // Khởi tạo map cho unreadCount
       });
       if (mounted) setState(() => _chatId = newChat.id);
     }
@@ -98,6 +102,7 @@ class _MessageScreenState extends State<MessageScreen> {
       chatId: _chatId!,
       currentUser: _currentUser!,
       targetUserName: widget.targetUserName ?? 'Người dùng',
+      targetUserId: widget.targetUserId!, // <-- ĐÃ KHẮC PHỤC: Truyền targetUserId
     );
   }
 }
@@ -131,7 +136,7 @@ class _ChatListView extends StatelessWidget {
         final chatDocs = snapshot.data!.docs;
         return ListView.builder(
           itemCount: chatDocs.length,
-          itemBuilder: (context, index) => _ChatListItem(chatDoc: chatDocs[index]),
+          itemBuilder: (context, index) => _ChatListItem(chatDoc: chatDocs[index], currentUser: currentUser), // Truyền currentUser
         );
       },
     );
@@ -145,8 +150,14 @@ class _ConversationView extends StatefulWidget {
   final String chatId;
   final User currentUser;
   final String targetUserName;
+  final String targetUserId; // <-- ĐÃ KHẮC PHỤC: Nhận targetUserId
 
-  const _ConversationView({required this.chatId, required this.currentUser, required this.targetUserName});
+  const _ConversationView({
+    required this.chatId,
+    required this.currentUser,
+    required this.targetUserName,
+    required this.targetUserId, // <-- ĐÃ KHẮC PHỤC
+  });
 
   @override
   State<_ConversationView> createState() => _ConversationViewState();
@@ -157,10 +168,14 @@ class _ConversationViewState extends State<_ConversationView> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String _currentUserName = 'Bạn';
+  late String _otherUserId; // <-- ĐÃ KHẮC PHỤC: Khai báo biến
 
   @override
   void initState() {
     super.initState();
+    // 1. Gán ID người nhận ngay lập tức
+    _otherUserId = widget.targetUserId; // <-- ĐÃ KHẮC PHỤC: Gán giá trị
+
     // Fetch the current user's display name
     _firestore.collection('users').doc(widget.currentUser.uid).get().then((doc) {
       if (mounted && doc.exists) {
@@ -193,11 +208,29 @@ class _ConversationViewState extends State<_ConversationView> {
     };
 
     try {
-      await _firestore.collection('chats').doc(widget.chatId).collection('messages').add(messageContent);
-      await _firestore.collection('chats').doc(widget.chatId).update({
-        'lastMessage': text,
-        'lastMessageTimestamp': FieldValue.serverTimestamp(),
-      });
+      final chatRef = _firestore.collection('chats').doc(widget.chatId);
+      final batch = _firestore.batch();
+
+      // 1. Thêm tin nhắn vào subcollection
+      batch.set(chatRef.collection('messages').doc(), messageContent);
+
+      // 2. Cập nhật lastMessage VÀ unreadCount của người nhận
+      if (_otherUserId.isNotEmpty) {
+        final String unreadField = 'unreadCount.$_otherUserId';
+        batch.update(chatRef, {
+          'lastMessage': text,
+          'lastMessageTimestamp': FieldValue.serverTimestamp(),
+          unreadField: FieldValue.increment(1), // <-- TĂNG SỐ LƯỢT CHƯA ĐỌC
+        });
+      } else {
+        batch.update(chatRef, {
+          'lastMessage': text,
+          'lastMessageTimestamp': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+
       _messageController.clear();
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
@@ -209,27 +242,36 @@ class _ConversationViewState extends State<_ConversationView> {
     }
   }
 
-  // Mark messages as read if they are from the other person and currently unread
+  // Mark messages as read and reset the unread counter
   void _markMessagesAsRead(List<QueryDocumentSnapshot> docs) {
     final unreadDocs = docs.where((doc) {
       final data = doc.data() as Map<String, dynamic>;
       return (data['senderId'] != widget.currentUser.uid) && (data['isRead'] == false);
     }).toList();
 
-    if (unreadDocs.isNotEmpty) {
-      // Use addPostFrameCallback to avoid calling setState or Firestore updates during build
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        final batch = _firestore.batch();
-        for (var doc in unreadDocs) {
-          batch.update(doc.reference, {'isRead': true});
-        }
-        batch.commit().catchError((_) {}); // Ignore errors for background update
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      final batch = _firestore.batch();
+
+      // 1. Đánh dấu các tin nhắn cũ là đã đọc
+      for (var doc in unreadDocs) {
+        batch.update(doc.reference, {'isRead': true});
+      }
+
+      // 2. Cập nhật unreadCount trong chat document
+      final String unreadField = 'unreadCount.${widget.currentUser.uid}';
+
+      batch.update(_firestore.collection('chats').doc(widget.chatId), {
+        unreadField: 0, // Đặt lại về 0
       });
-    }
+
+      batch.commit().catchError((_) {});
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    // ... (Code build giữ nguyên)
+// ... (Code build giữ nguyên)
     return Column(
       children: [
         Expanded(
@@ -353,7 +395,7 @@ class _ConversationViewState extends State<_ConversationView> {
 }
 
 // =======================================================
-// Date Header Widget
+// Date Header Widget (Giữ nguyên)
 // =======================================================
 class _DateHeader extends StatelessWidget {
   final DateTime date;
@@ -395,7 +437,7 @@ class _DateHeader extends StatelessWidget {
 }
 
 // =======================================================
-// Widget for a single message bubble
+// Widget for a single message bubble (Giữ nguyên)
 // =======================================================
 class _MessageBubble extends StatelessWidget {
   final String senderId;
@@ -475,7 +517,8 @@ class _MessageBubble extends StatelessWidget {
 // ===================================================================
 class _ChatListItem extends StatefulWidget {
   final DocumentSnapshot chatDoc;
-  const _ChatListItem({required this.chatDoc});
+  final User currentUser; // <-- ĐÃ KHẮC PHỤC: Nhận currentUser
+  const _ChatListItem({required this.chatDoc, required this.currentUser});
 
   @override
   State<_ChatListItem> createState() => _ChatListItemState();
@@ -484,24 +527,41 @@ class _ChatListItem extends StatefulWidget {
 class _ChatListItemState extends State<_ChatListItem> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  User? _currentUser;
   DocumentSnapshot? _otherUserDoc;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _currentUser = _auth.currentUser;
     _fetchOtherUserData();
   }
 
+  // FIXED: Thêm hàm format timestamp
+  String _formatTimestamp(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final dateToCheck = DateTime(date.year, date.month, date.day);
+
+    if (dateToCheck == today) {
+      return "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+    } else if (dateToCheck == yesterday) {
+      return 'Hôm qua';
+    } else if (dateToCheck.year == now.year) {
+      return '${date.day}/${date.month}';
+    } else {
+      return '${date.day}/${date.month}/${date.year}';
+    }
+  }
+
   Future<void> _fetchOtherUserData() async {
-    if (_currentUser == null) return;
     if (!mounted) return;
 
     final data = widget.chatDoc.data() as Map<String, dynamic>;
-    final List<dynamic> participants = data['participants'];
-    final String otherUserId = participants.firstWhere((id) => id != _currentUser!.uid, orElse: () => '');
+    final List<dynamic> participants = data['participants'] ?? [];
+    // FIXED: Sử dụng widget.currentUser
+    final String otherUserId = participants.firstWhere((id) => id != widget.currentUser.uid, orElse: () => '');
 
     if (otherUserId.isNotEmpty) {
       try {
@@ -551,58 +611,89 @@ class _ChatListItemState extends State<_ChatListItem> {
     }
 
     if (_otherUserDoc == null || !_otherUserDoc!.exists) {
-      return const SizedBox.shrink(); // Or a placeholder for a deleted user
+      return const SizedBox.shrink();
     }
 
     final userData = _otherUserDoc!.data() as Map<String, dynamic>;
-    final String targetUserName = userData['displayName'] ?? 'Người dùng';
+    final String otherUserName = userData['displayName'] ?? 'Người dùng';
     final String? targetAvatarUrl = userData['photoURL'] as String?;
-    final chatData = widget.chatDoc.data() as Map<String, dynamic>;
-    final String lastMessage = chatData['lastMessage'] ?? '';
 
-    // TÍNH TOÁN SỐ TIN NHẮN CHƯA ĐỌC
-    final int unreadCount = chatData['unreadCount'] is Map ? (chatData['unreadCount'][_currentUser!.uid] as int? ?? 0) : 0;
+    final chatData = widget.chatDoc.data() as Map<String, dynamic>;
+    final String lastMessage = chatData['lastMessage'] ?? 'Bắt đầu cuộc trò chuyện...';
+    final Timestamp? lastMessageTimestamp = chatData['lastMessageTimestamp'];
+
+    // LẤY SỐ LƯỢNG TIN NHẮN CHƯA ĐỌC
+    final String currentUserId = widget.currentUser.uid; // FIXED: Dùng widget.currentUser
+    final unreadCountMap = chatData['unreadCount'] as Map<String, dynamic>? ?? {};
+    final int unreadCount = (unreadCountMap[currentUserId] as num?)?.toInt() ?? 0;
     final bool hasUnread = unreadCount > 0;
+
+    final ImageProvider? avatarProvider = (targetAvatarUrl != null && targetAvatarUrl.isNotEmpty) ? NetworkImage(targetAvatarUrl) : null;
+
+    const Color whiteColor = Colors.white;
 
     return ListTile(
       leading: CircleAvatar(
         radius: 25,
         backgroundColor: darkSurface,
-        backgroundImage: (targetAvatarUrl != null && targetAvatarUrl.isNotEmpty) ? NetworkImage(targetAvatarUrl) : null,
-        child: (targetAvatarUrl == null || targetAvatarUrl.isEmpty)
-            ? Text(targetUserName.isNotEmpty ? targetUserName[0].toUpperCase() : 'U', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+        backgroundImage: avatarProvider,
+        child: avatarProvider == null
+            ? Text(otherUserName.isNotEmpty ? otherUserName[0].toUpperCase() : 'U', style: const TextStyle(color: whiteColor, fontWeight: FontWeight.bold))
             : null,
       ),
       title: Text(
-          targetUserName,
+          otherUserName,
           style: TextStyle(
-              color: Colors.white,
-              fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal // BOLD TÊN NẾU CÓ TIN CHƯA ĐỌC
+            color: whiteColor,
+            fontWeight: hasUnread ? FontWeight.bold : FontWeight.w600,
           )
       ),
       subtitle: Text(
           lastMessage,
           style: TextStyle(
-              color: hasUnread ? Colors.white : sonicSilver, // MÀU TRẮNG NẾU CHƯA ĐỌC
-              fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal
+            color: hasUnread ? whiteColor : sonicSilver,
+            fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis
       ),
-      trailing: hasUnread
-          ? Container(
-        padding: const EdgeInsets.all(6),
-        decoration: const BoxDecoration(color: topazColor, shape: BoxShape.circle),
-        child: Text(
-          unreadCount > 9 ? '9+' : unreadCount.toString(),
-          style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900),
+      trailing: SizedBox(
+        width: 60, // <-- Giới hạn chiều rộng tối đa là 60 pixels
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Hiển thị thời gian
+            if (lastMessageTimestamp != null)
+              Text(
+                _formatTimestamp(lastMessageTimestamp),
+                style: TextStyle(
+                  color: sonicSilver,
+                  fontSize: 12,
+                  fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            const SizedBox(height: 4),
+            // Hiển thị Badge
+            if (hasUnread)
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(color: coralRed, shape: BoxShape.circle),
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                child: Center(
+                  child: Text(
+                    unreadCount > 99 ? '99+' : unreadCount.toString(),
+                    style: const TextStyle(color: whiteColor, fontSize: 12, fontWeight: FontWeight.bold, height: 1.0),
+                  ),
+                ),
+              ),
+          ],
         ),
-      )
-          : null, // Không hiển thị gì nếu đã đọc
+      ),
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => MessageScreen(targetUserId: _otherUserDoc!.id, targetUserName: targetUserName)),
-        ).then((_) => _onNavigateBack()); // Refresh on return
+          MaterialPageRoute(builder: (context) => MessageScreen(targetUserId: _otherUserDoc!.id, targetUserName: otherUserName)),
+        ).then((_) => _onNavigateBack());
       },
     );
   }

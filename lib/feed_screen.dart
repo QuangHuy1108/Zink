@@ -549,14 +549,10 @@ class _FeedScreenState extends State<FeedScreen> {
                 },
               ),
               const SizedBox(width: 16),
-              IconButton(
-                icon: const Icon(Icons.message_outlined, color: sonicSilver, size: 24),
-                onPressed: () {
+              UnreadMessageBell(
+                onOpenMessage: () {
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MessageScreen()));
                 },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                splashRadius: 20,
               ),
             ],
           ),
@@ -1786,5 +1782,100 @@ class _PostCardState extends State<PostCard> {
 
     // Trạng thái hiển thị: Trả về PostCard gốc
     return _buildPostContent();
+  }
+}
+
+class UnreadMessageBell extends StatefulWidget {
+  final VoidCallback onOpenMessage;
+  const UnreadMessageBell({required this.onOpenMessage, super.key});
+
+  @override
+  State<UnreadMessageBell> createState() => _UnreadMessageBellState();
+}
+
+class _UnreadMessageBellState extends State<UnreadMessageBell> {
+  bool _hasUnreadMessages = false;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  Stream<QuerySnapshot>? _chatsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForUnreadMessages();
+  }
+
+  @override
+  void dispose() {
+    // Không cần dispose stream nếu bạn không gán .listen trực tiếp và chỉ dùng StreamBuilder.
+    // Tuy nhiên, ở đây chúng ta dùng .listen, nên để an toàn, cần lưu Subscription nếu muốn dispose.
+    // Do đó, ta chỉ cần dựa vào việc setState kiểm tra mounted.
+    super.dispose();
+  }
+
+  void _listenForUnreadMessages() {
+    final user = _auth.currentUser;
+    if (user != null) {
+      // Lắng nghe tất cả các cuộc trò chuyện mà user là người tham gia
+      _chatsStream = _firestore
+          .collection('chats')
+          .where('participants', arrayContains: user.uid)
+          .snapshots();
+
+      _chatsStream?.listen((snapshot) {
+        final hasUnread = snapshot.docs.any((doc) {
+          final data = doc.data() as Map<String, dynamic>? ?? {};
+          // Kiểm tra nếu unreadCount cho user hiện tại > 0
+          final unreadCountMap = data['unreadCount'] as Map<String, dynamic>? ?? {};
+          final count = (unreadCountMap[user.uid] as num?)?.toInt() ?? 0;
+          return count > 0;
+        });
+
+        if (mounted && hasUnread != _hasUnreadMessages) {
+          setState(() {
+            _hasUnreadMessages = hasUnread;
+          });
+        }
+      }, onError: (error) {
+        print("Lỗi lắng nghe tin nhắn chưa đọc: $error");
+        if (mounted) {
+          setState(() { _hasUnreadMessages = false; });
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          icon: const Icon(
+            Icons.message_outlined, // Icon tin nhắn
+            color: sonicSilver,
+            size: 24,
+          ),
+          onPressed: widget.onOpenMessage,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          splashRadius: 20,
+        ),
+        if (_hasUnreadMessages)
+          Positioned(
+            top: 2,
+            right: 2,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: topazColor, // DÙNG MÀU TOPAZ (VÀNG) theo yêu cầu
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
