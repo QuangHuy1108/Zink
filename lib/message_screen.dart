@@ -190,6 +190,8 @@ class _ChatListView extends StatelessWidget {
       stream: FirebaseFirestore.instance
           .collection('chats')
           .where('participants', arrayContains: currentUser.uid)
+      // THÊM: Sắp xếp theo isPinned (True trước, False sau)
+          .orderBy('isPinned', descending: true)
           .orderBy('lastMessageTimestamp', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
@@ -679,7 +681,16 @@ class _ChatListItemState extends State<_ChatListItem> {
   @override
   void initState() {
     super.initState();
-    _fetchOtherUserData();
+    _fetchOtherUserData(); // Lần tải đầu tiên
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChatListItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Chỉ tải lại nếu ID của tài liệu chat thực sự thay đổi.
+    if (widget.chatDoc.id != oldWidget.chatDoc.id) {
+      _fetchOtherUserData();
+    }
   }
 
   String _formatTimestamp(Timestamp timestamp) {
@@ -756,6 +767,215 @@ class _ChatListItemState extends State<_ChatListItem> {
     _fetchOtherUserData();
   }
 
+  void _showChatContextMenu(String otherUserName, bool isGroup, String otherUserId) {
+    final bool isPinned = _isChatPinned();
+    final pinActionText = isPinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn';
+    final pinActionIcon = isPinned ? Icons.push_pin : Icons.push_pin_outlined;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext sheetContext) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: darkSurface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Pin/Unpin
+              ListTile(
+                leading: Icon(pinActionIcon, color: topazColor),
+                title: Text(pinActionText, style: const TextStyle(color: whiteColor)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _togglePinChat(isPinned);
+                },
+              ),
+              // Delete
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: coralRed),
+                title: const Text('Xóa tin nhắn', style: TextStyle(color: coralRed)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _deleteChat(widget.chatDoc.id, otherUserName, isGroup);
+                },
+              ),
+              // Block (only for 1-on-1 chat)
+              if (isGroup)
+                ListTile(
+                  leading: const Icon(Icons.logout, color: coralRed), // Icon Rời nhóm
+                  title: const Text('Rời nhóm', style: TextStyle(color: coralRed)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _leaveGroup(widget.chatDoc.id, otherUserName);
+                  },
+                )
+              else
+                ListTile(
+                  leading: const Icon(Icons.block, color: coralRed),
+                  title: Text('Chặn $otherUserName', style: const TextStyle(color: coralRed)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _blockUser(otherUserId, otherUserName);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // --- 2. Kiểm tra ghim ---
+  bool _isChatPinned() {
+    final chatData = widget.chatDoc.data() as Map<String, dynamic>?;
+    return chatData?['isPinned'] as bool? ?? false;
+  }
+
+  // --- 3. Xử lý ghim/bỏ ghim ---
+  void _togglePinChat(bool isCurrentlyPinned) async {
+    try {
+      await _firestore.collection('chats').doc(widget.chatDoc.id).update({
+        'isPinned': !isCurrentlyPinned,
+      });
+      if (mounted) {
+        final message = !isCurrentlyPinned ? 'Đã ghim tin nhắn.' : 'Đã bỏ ghim tin nhắn.';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: topazColor));
+        // ĐÃ BỎ LỆNH GỌI _fetchOtherUserData() TẠI ĐÂY.
+        // StreamBuilder bên ngoài sẽ tự động cập nhật lại widget này với dữ liệu mới.
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể ghim/bỏ ghim.'), backgroundColor: coralRed));
+    }
+  }
+  // --- 4. Xử lý xóa tin nhắn (Chỉ xóa chat document cho đơn giản) ---
+  void _deleteChat(String chatId, String chatName, bool isGroup) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Xóa tin nhắn', style: TextStyle(color: whiteColor)),
+          content: Text('Bạn có chắc chắn muốn xóa tin nhắn với $chatName không? Hành động này không thể hoàn tác.', style: const TextStyle(color: sonicSilver)),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+            ),
+            TextButton(
+              child: const Text('Xóa', style: TextStyle(color: coralRed)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      try {
+        await _firestore.collection('chats').doc(chatId).delete();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã xóa tin nhắn với $chatName.'), backgroundColor: sonicSilver));
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể xóa tin nhắn.'), backgroundColor: coralRed));
+      }
+    }
+  }
+
+  // --- 5. Xử lý chặn người dùng ---
+  void _blockUser(String targetUserId, String targetUserName) async {
+    if (targetUserId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Chặn người dùng', style: TextStyle(color: whiteColor)),
+          content: Text('Bạn có chắc chắn muốn chặn $targetUserName không? Bạn sẽ không thể nhận tin nhắn từ người này.', style: const TextStyle(color: sonicSilver)),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+            ),
+            TextButton(
+              child: const Text('Chặn', style: TextStyle(color: coralRed)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      try {
+        await _firestore.collection('users').doc(widget.currentUser.uid).update({
+          'blockedUids': FieldValue.arrayUnion([targetUserId])
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã chặn $targetUserName.'), backgroundColor: coralRed));
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể chặn người dùng.'), backgroundColor: coralRed));
+      }
+    }
+  }
+
+  void _leaveGroup(String chatId, String groupName) async {
+    if (widget.currentUser.uid.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      // ... (AlertDialog giữ nguyên)
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Rời khỏi nhóm', style: TextStyle(color: whiteColor)),
+          content: Text('Bạn có chắc chắn muốn rời khỏi nhóm "$groupName" không?', style: const TextStyle(color: sonicSilver)),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+            ),
+            TextButton(
+              child: const Text('Rời nhóm', style: TextStyle(color: coralRed)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      try {
+        final chatRef = _firestore.collection('chats').doc(chatId);
+
+        // SỬA LỖI TẠI ĐÂY: Truy vấn Firestore để lấy tên người dùng hiện tại
+        final myUserDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
+        // Cần đảm bảo data() là Map<String, dynamic> an toàn
+        final myUserData = myUserDoc.data() as Map<String, dynamic>? ?? {};
+        final currentUserName = myUserData['displayName'] as String? ?? 'Một thành viên';
+
+        // 1. Xóa người dùng khỏi danh sách participants
+        await chatRef.update({
+          'participants': FieldValue.arrayRemove([widget.currentUser.uid]),
+          'unreadCount.${widget.currentUser.uid}': FieldValue.delete(), // Xóa unread count của họ
+          'lastMessage': '$currentUserName đã rời khỏi nhóm.',
+          'lastMessageTimestamp': FieldValue.serverTimestamp(),
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Bạn đã rời khỏi nhóm "$groupName".'), backgroundColor: sonicSilver));
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể rời nhóm.'), backgroundColor: coralRed));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -784,6 +1004,7 @@ class _ChatListItemState extends State<_ChatListItem> {
 
     final chatData = widget.chatDoc.data() as Map<String, dynamic>;
     final bool isGroup = chatData['isGroup'] as bool? ?? false;
+    final bool isPinned = chatData['isPinned'] as bool? ?? false;
 
     final userData = _otherUserDoc!.data() as Map<String, dynamic>;
     final String otherUserName = isGroup ? (userData['displayName'] ?? 'Group Chat') : (userData['displayName'] ?? 'Người dùng');
@@ -797,13 +1018,18 @@ class _ChatListItemState extends State<_ChatListItem> {
     final int unreadCount = (unreadCountMap[currentUserId] as num?)?.toInt() ?? 0;
     final bool hasUnread = unreadCount > 0;
 
+    final List<dynamic> participants = chatData['participants'] ?? [];
+    final String otherUserId = isGroup
+        ? '' // Không chặn group
+        : participants.firstWhere((id) => id != currentUserId, orElse: () => '');
+
     final ImageProvider? avatarProvider = (targetAvatarUrl != null && targetAvatarUrl.isNotEmpty) ? NetworkImage(targetAvatarUrl) : null;
     final IconData defaultIcon = isGroup ? Icons.group_rounded : Icons.person_outline;
     final String defaultAvatarText = isGroup ? otherUserName.substring(0, 1).toUpperCase() : (otherUserName.isNotEmpty ? otherUserName[0].toUpperCase() : 'U');
 
     const Color whiteColor = Colors.white;
 
-    return ListTile(
+    final listTileContent = ListTile(
       leading: CircleAvatar(
         radius: 25,
         backgroundColor: darkSurface,
@@ -812,12 +1038,26 @@ class _ChatListItemState extends State<_ChatListItem> {
             ? (isGroup ? Icon(defaultIcon, color: whiteColor, size: 25) : Text(defaultAvatarText, style: const TextStyle(color: whiteColor, fontWeight: FontWeight.bold)))
             : null,
       ),
-      title: Text(
-          otherUserName,
-          style: TextStyle(
-            color: whiteColor,
-            fontWeight: hasUnread ? FontWeight.bold : FontWeight.w600,
-          )
+      title: Row( // Bọc Title trong Row để thêm biểu tượng Ghim
+        children: [
+          Text(
+              otherUserName,
+              style: TextStyle(
+                color: whiteColor,
+                fontWeight: hasUnread ? FontWeight.bold : FontWeight.w600,
+              )
+          ),
+          // HIỂN THỊ BIỂU TƯỢNG GHIM
+          if (isPinned)
+            Padding(
+              padding: const EdgeInsets.only(left: 6.0),
+              child: Icon(
+                Icons.push_pin_rounded,
+                color: sonicSilver,
+                size: 16,
+              ),
+            ),
+        ],
       ),
       subtitle: Text(
           lastMessage,
@@ -859,26 +1099,31 @@ class _ChatListItemState extends State<_ChatListItem> {
           ],
         ),
       ),
-      onTap: () {
-        // --- LOGIC SỬA LỖI: Luôn truyền Chat ID làm targetUserId ---
-        final String chatId = widget.chatDoc.id;
+      // BỎ onTap khỏi ListTile gốc
+      onTap: null,
+    );
 
-        // Nếu là 1-on-1, chúng ta cần UID của người kia để MessageScreen có thể tìm kiếm
-        final List<dynamic> participants = chatData['participants'] ?? [];
+    return GestureDetector(
+      // Thêm onTap cho GestureDetector
+      onTap: () {
+        final String chatId = widget.chatDoc.id;
         final String targetUid = isGroup
-            ? chatId // Nếu là nhóm, truyền CHAT ID
-            : participants.firstWhere((id) => id != widget.currentUser.uid, orElse: () => ''); // Nếu 1-v-1, truyền UID người nhận
+            ? chatId
+            : otherUserId;
 
         Navigator.of(context).push(
           MaterialPageRoute(
               builder: (context) => MessageScreen(
-                // Nếu là group, targetUserId = CHAT ID. Nếu là 1-v-1, targetUserId = UID của người kia.
                 targetUserId: targetUid,
                 targetUserName: otherUserName,
               )
           ),
         ).then((_) => _onNavigateBack());
       },
+      // --- THÊM onLongPress ---
+      onLongPress: () => _showChatContextMenu(otherUserName, isGroup, otherUserId),
+      // ------------------------
+      child: listTileContent,
     );
   }
 }
