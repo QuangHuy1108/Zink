@@ -55,45 +55,44 @@ class _MessageScreenState extends State<MessageScreen> {
   String? _chatId;
 
   @override
+  @override
   void initState() {
     super.initState();
     _currentUser = _auth.currentUser;
-    _getOrCreateChatId();
+    if (_currentUser != null) {
+      _initializeChatLogic(); // Gọi hàm khởi tạo mới
+    }
   }
 
-  Future<void> _getOrCreateChatId() async {
-    if (_currentUser == null) return;
+  Future<void> _initializeChatLogic() async {
+    final currentUserId = _currentUser!.uid;
+    final otherId = widget.targetUserId; // Có thể là UID hoặc Chat ID
 
-    // Case 1: Không có target user/ID, hiển thị danh sách chats. (Vào từ Home/Nav Bar)
-    if (widget.targetUserId == null || widget.targetUserId!.isEmpty) {
+    // Case 1: Màn hình chính (Danh sách Chat)
+    if (otherId == null || otherId.isEmpty) {
       if (mounted) setState(() => _chatId = 'LIST_VIEW');
       return;
     }
 
-    final currentUserId = _currentUser!.uid;
-    final potentialId = widget.targetUserId!; // Đây có thể là Chat ID HOẶC User ID
-
-    // --- LOGIC MỚI: Ưu tiên kiểm tra xem ID này có phải là CHAT ID đã tồn tại không ---
-    final chatDoc = await _firestore.collection('chats').doc(potentialId).get();
-    if (chatDoc.exists) {
-      final data = chatDoc.data();
-      if (data != null && (data['participants'] as List?)?.contains(currentUserId) == true) {
-        // Nếu tìm thấy và người dùng hiện tại là thành viên, đây là CHAT ID.
-        if (mounted) setState(() => _chatId = potentialId);
-        return;
-      }
+    // Case 2: Chat Nhóm HOẶC Chat đã tồn tại
+    final chatDoc = await _firestore.collection('chats').doc(otherId).get();
+    if (chatDoc.exists && (chatDoc.data()?['participants'] as List?)?.contains(currentUserId) == true) {
+      if (mounted) setState(() => _chatId = otherId);
+      return;
     }
-    // --- KẾT THÚC LOGIC MỚI ---
 
-    // Case 2: Đây là target USER ID (e.g., bấm 'Message' từ profile của một người khác)
-    final targetUserId = potentialId;
-    final participants = [currentUserId, targetUserId]..sort();
+    // Case 3: 1-on-1 chat mới (otherId là User ID)
+    final participants = [currentUserId, otherId]..sort();
 
     // Tìm chat 1-on-1 hiện có
-    final querySnapshot = await _firestore.collection('chats').where('participants', isEqualTo: participants).limit(1).get();
+    final querySnapshot = await _firestore.collection('chats')
+        .where('participants', isEqualTo: participants)
+        .where('isGroup', isEqualTo: false)
+        .limit(1)
+        .get();
 
     if (querySnapshot.docs.isNotEmpty) {
-      if (mounted) setState(() => _chatId = querySnapshot.docs.first.id);
+      _chatId = querySnapshot.docs.first.id;
     } else {
       // Tạo chat 1-on-1 mới
       final newChat = await _firestore.collection('chats').add({
@@ -102,16 +101,25 @@ class _MessageScreenState extends State<MessageScreen> {
         'lastMessageTimestamp': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
         'unreadCount': {},
+        'isGroup': false, // Quan trọng: Đánh dấu là chat 1-on-1
+        'isPinned': false, // Cần thiết cho lệnh orderBy
       });
-      if (mounted) setState(() => _chatId = newChat.id);
+      _chatId = newChat.id;
     }
+
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_chatId == null || _currentUser == null) {
+      return const Center(child: CircularProgressIndicator(color: topazColor));
+    }
+
     final bool isListView = (_chatId == 'LIST_VIEW');
     final String title = isListView
         ? 'Tin nhắn'
+    // [ĐÃ SỬA LỖI NULL] targetUserId là nullable, nên phải dùng ?.
         : (widget.targetUserName ?? widget.targetUserId ?? 'Đang tải...');
 
     return Scaffold(
@@ -146,15 +154,19 @@ class _MessageScreenState extends State<MessageScreen> {
       return _ChatListView(currentUser: _currentUser!);
     }
 
+    // Sử dụng FutureBuilder để đảm bảo thông tin chat là mới nhất
     return FutureBuilder<DocumentSnapshot>(
       future: _firestore.collection('chats').doc(_chatId!).get(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: topazColor));
         }
 
         final data = snapshot.data!.data() as Map<String, dynamic>?;
         final isGroup = data?['isGroup'] as bool? ?? false;
+
+        // [ĐÃ SỬA LỖI NULL] targetUserId là nullable, cần kiểm tra
+        final String resolvedTargetId = widget.targetUserId ?? '';
 
         final String resolvedTargetName = widget.targetUserName ?? (
             isGroup
@@ -168,7 +180,7 @@ class _MessageScreenState extends State<MessageScreen> {
             chatId: _chatId!,
             currentUser: _currentUser!,
             targetUserName: resolvedTargetName,
-            targetUserId: widget.targetUserId!,
+            targetUserId: resolvedTargetId, // Truyền ID đích đã được xử lý null
             isGroup: isGroup,
           ),
         );
@@ -190,7 +202,6 @@ class _ChatListView extends StatelessWidget {
       stream: FirebaseFirestore.instance
           .collection('chats')
           .where('participants', arrayContains: currentUser.uid)
-      // THÊM: Sắp xếp theo isPinned (True trước, False sau)
           .orderBy('isPinned', descending: true)
           .orderBy('lastMessageTimestamp', descending: true)
           .snapshots(),
@@ -201,11 +212,18 @@ class _ChatListView extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text('Lỗi: ${snapshot.error}', style: const TextStyle(color: coralRed)));
         }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+
+        // [SỬA LỖ HỔNG 1: SOFT DELETE] Lọc những chat đã bị người dùng hiện tại ẩn/xóa
+        final chatDocs = (snapshot.data?.docs ?? []).where((doc) {
+          final data = doc.data() as Map<String, dynamic>? ?? {};
+          final isHidden = data['userHidden'] is Map && (data['userHidden'] as Map)[currentUser.uid] == true;
+          return !isHidden;
+        }).toList();
+
+        if (chatDocs.isEmpty) {
           return const Center(child: Text('Chưa có cuộc trò chuyện nào.', style: TextStyle(color: sonicSilver)));
         }
 
-        final chatDocs = snapshot.data!.docs;
         return ListView.builder(
           itemCount: chatDocs.length,
           itemBuilder: (context, index) => _ChatListItem(chatDoc: chatDocs[index], currentUser: currentUser),
@@ -214,7 +232,6 @@ class _ChatListView extends StatelessWidget {
     );
   }
 }
-
 // =======================================================
 // Widget for a single conversation
 // =======================================================
@@ -285,6 +302,23 @@ class _ConversationViewState extends State<_ConversationView> {
   void _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    if (!widget.isGroup && widget.targetUserId.isNotEmpty) {
+      final otherUserDoc = await _firestore.collection('users').doc(widget.targetUserId).get();
+      final blockedUids = otherUserDoc.data()?['blockedUids'] as List<dynamic>? ?? [];
+
+      if (blockedUids.contains(widget.currentUser.uid)) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể gửi tin nhắn. Bạn đã bị chặn.'), backgroundColor: coralRed));
+        return;
+      }
+
+      // KIỂM TRA MÌNH CÓ CHẶN NGƯỜI KIA KHÔNG
+      final myDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
+      final myBlockedUids = myDoc.data()?['blockedUids'] as List<dynamic>? ?? [];
+      if (myBlockedUids.contains(widget.targetUserId)) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không thể gửi tin nhắn. Bạn đã chặn người dùng này.'), backgroundColor: coralRed));
+        return;
+      }
+    }
 
     // --- BẮT ĐẦU THAY ĐỔI: Lấy Avatar URL ---
     String? senderAvatarUrl;
@@ -300,12 +334,10 @@ class _ConversationViewState extends State<_ConversationView> {
 
     final messageContent = {
       'senderId': widget.currentUser.uid,
-      'senderName': _currentUserName,
       'text': text,
       'timestamp': FieldValue.serverTimestamp(),
       'type': 'text',
       'isRead': false,
-      'senderAvatarUrl': senderAvatarUrl, // <-- LƯU URL AVATAR
     };
 
     try {
@@ -378,7 +410,12 @@ class _ConversationViewState extends State<_ConversationView> {
       children: [
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: _firestore.collection('chats').doc(widget.chatId).collection('messages').orderBy('timestamp', descending: true).snapshots(),
+            stream: _firestore
+                .collection('chats')
+                .doc(widget.chatId) // <-- PHẢI SỬ DỤNG CHATID TỪ WIDGET
+                .collection('messages')
+                .orderBy('timestamp', descending: true)
+                .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator(color: topazColor));
@@ -406,8 +443,7 @@ class _ConversationViewState extends State<_ConversationView> {
                   final DateTime currentDate = currentMsgTimestamp.toDate();
 
                   // --- THAY ĐỔI: Lấy Avatar URL ---
-                  final String? senderAvatarUrl = data['senderAvatarUrl'] as String?;
-                  // --- KẾT THÚC THAY ĐỔI ---
+                  final String senderId = data['senderId'] ?? '';                  // --- KẾT THÚC THAY ĐỔI ---
 
                   bool showDateHeader = false;
                   if (index == messages.length - 1) {
@@ -428,9 +464,6 @@ class _ConversationViewState extends State<_ConversationView> {
                     timestamp: currentMsgTimestamp,
                     isMe: (data['senderId'] ?? '') == widget.currentUser.uid,
                     isRead: data['isRead'] ?? false,
-                    // --- THAY ĐỔI: Truyền Avatar URL ---
-                    senderAvatarUrl: senderAvatarUrl,
-                    // --- KẾT THÚC THAY ĐỔI ---
                   );
 
                   if (showDateHeader) {
@@ -563,7 +596,6 @@ class _MessageBubble extends StatelessWidget {
   final Timestamp timestamp;
   final bool isMe;
   final bool isRead;
-  final String? senderAvatarUrl;
 
   const _MessageBubble({
     required this.senderId,
@@ -571,7 +603,6 @@ class _MessageBubble extends StatelessWidget {
     required this.timestamp,
     required this.isMe,
     this.isRead = false,
-    this.senderAvatarUrl,
   });
 
   @override
@@ -579,14 +610,34 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final String timeString = "${timestamp.toDate().hour.toString().padLeft(2, '0')}:${timestamp.toDate().minute.toString().padLeft(2, '0')}";
 
-    final ImageProvider? avatarProvider = (senderAvatarUrl != null && senderAvatarUrl!.startsWith('http'))
-        ? NetworkImage(senderAvatarUrl!)
-        : null;
+    if (!isMe) {
+      return FutureBuilder<DocumentSnapshot>(
+        future: FirebaseFirestore.instance.collection('users').doc(senderId).get(),
+        builder: (context, snapshot) {
+          String? avatarUrl;
+          if (snapshot.hasData && snapshot.data!.exists) {
+            final data = snapshot.data!.data() as Map<String, dynamic>?;
+            avatarUrl = data?['photoURL'] as String?;
+          }
 
+          final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+              ? NetworkImage(avatarUrl) : null;
+
+          return _buildBubbleLayout(context, timeString, avatarProvider, isMe, isRead, text);
+        },
+      );
+    }
+
+    // Nếu là tin nhắn của mình, không cần tra cứu
+    return _buildBubbleLayout(context, timeString, null, isMe, isRead, text);
+  }
+
+  // Hàm helper để xây dựng layout bong bóng
+  Widget _buildBubbleLayout(BuildContext context, String timeString, ImageProvider? avatarProvider, bool isMe, bool isRead, String text) {
     final bubble = Container(
       margin: const EdgeInsets.symmetric(vertical: 2),
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70), // Giảm maxWidth để chừa chỗ cho Avatar
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70),
       decoration: BoxDecoration(
         color: isMe ? topazColor : darkSurface,
         borderRadius: BorderRadius.only(
@@ -632,7 +683,6 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
 
-    // Xây dựng giao diện bao gồm Avatar và Bubble
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: Row(
@@ -767,10 +817,26 @@ class _ChatListItemState extends State<_ChatListItem> {
     _fetchOtherUserData();
   }
 
+  void _unhideChat() async {
+    try {
+      await _firestore.collection('chats').doc(widget.chatDoc.id).update({
+        'userHidden.${widget.currentUser.uid}': FieldValue.delete(), // Xóa trường ẩn
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã khôi phục tin nhắn.'), backgroundColor: topazColor));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể khôi phục tin nhắn.'), backgroundColor: coralRed));
+    }
+  }
+
   void _showChatContextMenu(String otherUserName, bool isGroup, String otherUserId) {
     final bool isPinned = _isChatPinned();
     final pinActionText = isPinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn';
     final pinActionIcon = isPinned ? Icons.push_pin : Icons.push_pin_outlined;
+
+    // [SỬA LỖ HỔNG 1: SOFT DELETE] Kiểm tra nếu chat đã bị ẩn
+    final chatData = widget.chatDoc.data() as Map<String, dynamic>? ?? {};
+    final isHidden = chatData['userHidden'] is Map && (chatData['userHidden'] as Map)[widget.currentUser.uid] == true;
+
 
     showModalBottomSheet(
       context: context,
@@ -790,21 +856,31 @@ class _ChatListItemState extends State<_ChatListItem> {
               // Pin/Unpin
               ListTile(
                 leading: Icon(pinActionIcon, color: topazColor),
-                title: Text(pinActionText, style: const TextStyle(color: whiteColor)),
+                title: Text(pinActionText, style: const TextStyle(color: Colors.white)),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _togglePinChat(isPinned);
                 },
               ),
-              // Delete
+              // Delete (Xóa mềm)
               ListTile(
                 leading: const Icon(Icons.delete_outline, color: coralRed),
-                title: const Text('Xóa tin nhắn', style: TextStyle(color: coralRed)),
+                title: const Text('Ẩn/Xóa tin nhắn (Chỉ mình tôi)', style: TextStyle(color: coralRed)),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _deleteChat(widget.chatDoc.id, otherUserName, isGroup);
+                  _deleteChat(widget.chatDoc.id, otherUserName, isGroup); // Vẫn gọi hàm xóa, nhưng logic đã đổi
                 },
               ),
+              // [SỬA LỖ HỔNG 1: SOFT DELETE] Tùy chọn Hoàn tác
+              if (isHidden)
+                ListTile(
+                  leading: const Icon(Icons.restore_page, color: activeGreen),
+                  title: const Text('Hoàn tác xóa tin nhắn', style: TextStyle(color: activeGreen)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _unhideChat();
+                  },
+                ),
               // Block (only for 1-on-1 chat)
               if (isGroup)
                 ListTile(
@@ -860,15 +936,15 @@ class _ChatListItemState extends State<_ChatListItem> {
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: darkSurface,
-          title: const Text('Xóa tin nhắn', style: TextStyle(color: whiteColor)),
-          content: Text('Bạn có chắc chắn muốn xóa tin nhắn với $chatName không? Hành động này không thể hoàn tác.', style: const TextStyle(color: sonicSilver)),
+          title: const Text('Ẩn tin nhắn', style: TextStyle(color: Colors.white)),
+          content: Text('Bạn có chắc chắn muốn ẩn/xóa tin nhắn này (chỉ mình bạn không thấy)?', style: const TextStyle(color: sonicSilver)),
           actions: [
             TextButton(
               child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
               onPressed: () => Navigator.of(dialogContext).pop(false),
             ),
             TextButton(
-              child: const Text('Xóa', style: TextStyle(color: coralRed)),
+              child: const Text('Ẩn', style: TextStyle(color: coralRed)),
               onPressed: () => Navigator.of(dialogContext).pop(true),
             ),
           ],
@@ -878,10 +954,13 @@ class _ChatListItemState extends State<_ChatListItem> {
 
     if (confirm == true) {
       try {
-        await _firestore.collection('chats').doc(chatId).delete();
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã xóa tin nhắn với $chatName.'), backgroundColor: sonicSilver));
+        // [THAY THẾ LỆNH DELETE BẰNG LỆNH UPDATE]
+        await _firestore.collection('chats').doc(chatId).update({
+          'userHidden.${widget.currentUser.uid}': true, // Dùng FieldValue.delete() nếu bạn muốn xóa trường khi unhide
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã ẩn tin nhắn với $chatName.'), backgroundColor: sonicSilver));
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể xóa tin nhắn.'), backgroundColor: coralRed));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể ẩn tin nhắn.'), backgroundColor: coralRed));
       }
     }
   }

@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+// [KHẮC PHỤC LỖI 2] Import màn hình tin nhắn
+import 'message_screen.dart';
+
 // Constants (Sử dụng lại từ file app_colors.dart)
 const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
@@ -22,7 +25,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _groupNameController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
+  // [KHẮC PHỤC LỖI 1] Tên biến chính xác
   Set<String> _selectedUids = {}; // Danh sách UID đã chọn
+
   bool _isLoading = false;
   String _friendSearchQuery = '';
 
@@ -94,19 +99,14 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
 
-    // Danh sách thành viên: Người tạo + các thành viên được chọn
     final List<String> allParticipants = [currentUser.uid, ..._selectedUids].toSet().toList();
 
     try {
-      // Lấy tên người tạo
       DocumentSnapshot userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
-
-      // SỬA LỖI: Ép kiểu tường minh userDoc.data() để Dart biết nó là Map
       String creatorName = (userDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng';
 
-      // Tạo tài liệu chat nhóm
-      await _firestore.collection('chats').add({
-        'isGroup': true, // <-- Dấu hiệu nhận biết Group Chat
+      final newChatDoc = await _firestore.collection('chats').add({
+        'isGroup': true,
         'groupName': groupName,
         'participants': allParticipants,
         'groupAdminId': currentUser.uid,
@@ -117,11 +117,19 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         'unreadCount': { for (var uid in allParticipants) uid : 0 },
         'groupAvatarUrl': null,
         'groupDescription': null,
+        // [ĐÃ KHẮC PHỤC] Thêm trường isPinned mặc định là false
+        'isPinned': false,
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã tạo nhóm "$groupName" thành công!'), backgroundColor: activeGreen));
-        Navigator.of(context).pop(); // Đóng màn hình tạo nhóm
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => MessageScreen(
+              targetUserId: newChatDoc.id,
+              targetUserName: groupName,
+            ),
+          ),
+        );
       }
 
     } catch (e) {
@@ -130,7 +138,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-  @override
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -140,9 +148,11 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         backgroundColor: darkSurface,
         actions: [
           TextButton(
+            // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
             onPressed: _selectedUids.isNotEmpty && _groupNameController.text.trim().isNotEmpty && !_isLoading ? _createGroup : null,
             child: _isLoading
                 ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: topazColor)))
+            // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
                 : Text('Tạo', style: TextStyle(color: _selectedUids.isNotEmpty && _groupNameController.text.trim().isNotEmpty ? topazColor : sonicSilver.withOpacity(0.5))),
           ),
         ],
@@ -178,6 +188,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               ),
             ),
           ),
+          // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text('Đã chọn ${_selectedUids.length} thành viên.', style: const TextStyle(color: sonicSilver)),
@@ -221,11 +232,13 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                     final name = data['displayName'] ?? 'Người dùng';
                     final username = data['username'] ?? '';
                     final avatarUrl = data['photoURL'] as String?;
+                    // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
                     final isSelected = _selectedUids.contains(uid);
 
                     final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http')) ? NetworkImage(avatarUrl) : null;
 
                     return ListTile(
+                      // [KHẮC PHỤC LỖI 4] onTap là VoidCallback
                       onTap: _isLoading ? null : () => _toggleSelection(uid),
                       leading: CircleAvatar(
                         radius: 20, backgroundImage: avatarProvider, backgroundColor: darkSurface,
