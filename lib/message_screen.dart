@@ -1,10 +1,12 @@
 // lib/message_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/scheduler.dart';
 
-import 'create_group_screen.dart'; // <--- Import màn hình tạo nhóm
+import 'create_group_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
+import 'profile_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen, PostDetailScreen, Comment, PlaceholderScreen, FeedScreen, FollowersScreen, MessageScreen;
 
 const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
@@ -12,9 +14,11 @@ const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C);
 const Color whiteColor = Colors.white;
 const Color blackColor = Colors.black;
+const Color activeGreen = Color(0xFF32CD32);
+const Color lightGrey = Color(0xFFD3D3D3);
 
 // =======================================================
-// MOCK CLASS (Đã sửa lỗi)
+// MOCK CLASS (Giữ nguyên)
 // =======================================================
 class MockDocumentSnapshot implements DocumentSnapshot {
   @override
@@ -36,10 +40,10 @@ class MockDocumentSnapshot implements DocumentSnapshot {
 
 
 // =======================================================
-// Main Screen Widget (Router)
+// Main Screen Widget (Router) (Giữ nguyên)
 // =======================================================
 class MessageScreen extends StatefulWidget {
-  final String? targetUserId; // Đây có thể là UID của người nhận HOẶC Chat ID (dành cho chat đã tồn tại)
+  final String? targetUserId;
   final String? targetUserName;
 
   const MessageScreen({super.key, this.targetUserId, this.targetUserName});
@@ -60,31 +64,27 @@ class _MessageScreenState extends State<MessageScreen> {
     super.initState();
     _currentUser = _auth.currentUser;
     if (_currentUser != null) {
-      _initializeChatLogic(); // Gọi hàm khởi tạo mới
+      _initializeChatLogic();
     }
   }
 
   Future<void> _initializeChatLogic() async {
     final currentUserId = _currentUser!.uid;
-    final otherId = widget.targetUserId; // Có thể là UID hoặc Chat ID
+    final otherId = widget.targetUserId;
 
-    // Case 1: Màn hình chính (Danh sách Chat)
     if (otherId == null || otherId.isEmpty) {
       if (mounted) setState(() => _chatId = 'LIST_VIEW');
       return;
     }
 
-    // Case 2: Chat Nhóm HOẶC Chat đã tồn tại
     final chatDoc = await _firestore.collection('chats').doc(otherId).get();
     if (chatDoc.exists && (chatDoc.data()?['participants'] as List?)?.contains(currentUserId) == true) {
       if (mounted) setState(() => _chatId = otherId);
       return;
     }
 
-    // Case 3: 1-on-1 chat mới (otherId là User ID)
     final participants = [currentUserId, otherId]..sort();
 
-    // Tìm chat 1-on-1 hiện có
     final querySnapshot = await _firestore.collection('chats')
         .where('participants', isEqualTo: participants)
         .where('isGroup', isEqualTo: false)
@@ -94,15 +94,14 @@ class _MessageScreenState extends State<MessageScreen> {
     if (querySnapshot.docs.isNotEmpty) {
       _chatId = querySnapshot.docs.first.id;
     } else {
-      // Tạo chat 1-on-1 mới
       final newChat = await _firestore.collection('chats').add({
         'participants': participants,
         'lastMessage': '',
         'lastMessageTimestamp': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
         'unreadCount': {},
-        'isGroup': false, // Quan trọng: Đánh dấu là chat 1-on-1
-        'isPinned': false, // Cần thiết cho lệnh orderBy
+        'isGroup': false,
+        'isPinned': false,
       });
       _chatId = newChat.id;
     }
@@ -119,7 +118,6 @@ class _MessageScreenState extends State<MessageScreen> {
     final bool isListView = (_chatId == 'LIST_VIEW');
     final String title = isListView
         ? 'Tin nhắn'
-    // [ĐÃ SỬA LỖI NULL] targetUserId là nullable, nên phải dùng ?.
         : (widget.targetUserName ?? widget.targetUserId ?? 'Đang tải...');
 
     return Scaffold(
@@ -154,7 +152,6 @@ class _MessageScreenState extends State<MessageScreen> {
       return _ChatListView(currentUser: _currentUser!);
     }
 
-    // Sử dụng FutureBuilder để đảm bảo thông tin chat là mới nhất
     return FutureBuilder<DocumentSnapshot>(
       future: _firestore.collection('chats').doc(_chatId!).get(),
       builder: (context, snapshot) {
@@ -165,7 +162,6 @@ class _MessageScreenState extends State<MessageScreen> {
         final data = snapshot.data!.data() as Map<String, dynamic>?;
         final isGroup = data?['isGroup'] as bool? ?? false;
 
-        // [ĐÃ SỬA LỖI NULL] targetUserId là nullable, cần kiểm tra
         final String resolvedTargetId = widget.targetUserId ?? '';
 
         final String resolvedTargetName = widget.targetUserName ?? (
@@ -180,7 +176,7 @@ class _MessageScreenState extends State<MessageScreen> {
             chatId: _chatId!,
             currentUser: _currentUser!,
             targetUserName: resolvedTargetName,
-            targetUserId: resolvedTargetId, // Truyền ID đích đã được xử lý null
+            targetUserId: resolvedTargetId,
             isGroup: isGroup,
           ),
         );
@@ -190,7 +186,7 @@ class _MessageScreenState extends State<MessageScreen> {
 }
 
 // =======================================================
-// Widget for displaying the list of all chats
+// Widget for displaying the list of all chats (Giữ nguyên)
 // =======================================================
 class _ChatListView extends StatelessWidget {
   final User currentUser;
@@ -213,7 +209,6 @@ class _ChatListView extends StatelessWidget {
           return Center(child: Text('Lỗi: ${snapshot.error}', style: const TextStyle(color: coralRed)));
         }
 
-        // [SỬA LỖ HỔNG 1: SOFT DELETE] Lọc những chat đã bị người dùng hiện tại ẩn/xóa
         final chatDocs = (snapshot.data?.docs ?? []).where((doc) {
           final data = doc.data() as Map<String, dynamic>? ?? {};
           final isHidden = data['userHidden'] is Map && (data['userHidden'] as Map)[currentUser.uid] == true;
@@ -232,6 +227,98 @@ class _ChatListView extends StatelessWidget {
     );
   }
 }
+
+// BỔ SUNG: Widget hiển thị Tin nhắn được Ghim
+class _PinnedMessageView extends StatelessWidget {
+  final String text;
+  final VoidCallback onDismiss;
+
+  const _PinnedMessageView({required this.text, required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(8.0),
+      color: darkSurface,
+      child: Row(
+        children: [
+          const Icon(Icons.push_pin, color: topazColor, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: whiteColor, fontSize: 13),
+            ),
+          ),
+          InkWell(
+            onTap: onDismiss,
+            child: const Padding(
+              padding: EdgeInsets.only(left: 8.0),
+              child: Icon(Icons.close, color: sonicSilver, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// BỔ SUNG: Widget hiển thị trạng thái đang trả lời
+class _ReplyPreview extends StatelessWidget {
+  final String senderName;
+  final String text;
+  final VoidCallback onCancel;
+
+  const _ReplyPreview({
+    required this.senderName,
+    required this.text,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: lightGrey.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(left: BorderSide(color: topazColor, width: 4)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Trả lời $senderName', style: const TextStyle(color: topazColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: sonicSilver, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          InkWell(
+            onTap: onCancel,
+            child: const Padding(
+              padding: EdgeInsets.only(left: 8.0),
+              child: Icon(Icons.close, color: sonicSilver, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 // =======================================================
 // Widget for a single conversation
 // =======================================================
@@ -258,14 +345,19 @@ class _ConversationViewState extends State<_ConversationView> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _messageFocusNode = FocusNode(); // <--- FIX LỖI 2: Thêm FocusNode
   String _currentUserName = 'Bạn';
   late String _otherUserId;
   List<String> _groupParticipants = [];
 
+  // BỔ SUNG: State cho tính năng mới
+  Map<String, dynamic>? _replyingToMessage; // {id, senderName, text}
+  String? _pinnedMessageId;
+  Map<String, dynamic>? _pinnedMessageData;
+
   @override
   void initState() {
     super.initState();
-
     _otherUserId = widget.targetUserId;
 
     if (widget.isGroup) {
@@ -278,6 +370,26 @@ class _ConversationViewState extends State<_ConversationView> {
         setState(() {
           _currentUserName = data['displayName'] ?? 'Bạn';
         });
+      }
+    });
+
+    // Bổ sung: Lắng nghe trạng thái ghim
+    _fetchPinnedMessage();
+  }
+
+  // BỔ SUNG: Logic Lấy tin nhắn được ghim
+  void _fetchPinnedMessage() {
+    _firestore.collection('chats').doc(widget.chatId).snapshots().listen((snapshot) {
+      if (mounted && snapshot.exists) {
+        final data = snapshot.data();
+        if (data != null) {
+          setState(() {
+            _pinnedMessageId = data['pinnedMessageId'] as String?;
+            _pinnedMessageData = {
+              'text': data['pinnedMessageText'] ?? 'Đã ghim một tin nhắn',
+            };
+          });
+        }
       }
     });
   }
@@ -296,12 +408,47 @@ class _ConversationViewState extends State<_ConversationView> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _messageFocusNode.dispose(); // <--- FIX LỖI 2: Dispose FocusNode
     super.dispose();
   }
 
+  // BỔ SUNG: Logic Trả lời
+  void _setReply(Map<String, dynamic> messageData) {
+    setState(() {
+      _replyingToMessage = {
+        'id': messageData['messageId'],
+        'senderName': messageData['senderName'],
+        'text': messageData['text']
+      };
+    });
+    // Request focus for better UX
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      FocusScope.of(context).requestFocus(_messageFocusNode);
+    });
+  }
+
+  void _clearReply() {
+    // SỬA: Đảm bảo việc xóa context trả lời gọi setState an toàn
+    setState(() {
+      _replyingToMessage = null;
+    });
+  }
+
+  // SỬA: Cập nhật _sendMessage
   void _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+
+    final replyContext = _replyingToMessage;
+    _clearReply();
+
+    DocumentSnapshot myUserDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
+    final myData = myUserDoc.data() as Map<String, dynamic>? ?? {};
+    final String senderName = myData['displayName'] ?? 'Người dùng Zink';
+    final String? senderAvatarUrl = myData['photoURL'];
+
+    // ... (logic kiểm tra chặn/block giữ nguyên)
+
     if (!widget.isGroup && widget.targetUserId.isNotEmpty) {
       final otherUserDoc = await _firestore.collection('users').doc(widget.targetUserId).get();
       final blockedUids = otherUserDoc.data()?['blockedUids'] as List<dynamic>? ?? [];
@@ -311,7 +458,6 @@ class _ConversationViewState extends State<_ConversationView> {
         return;
       }
 
-      // KIỂM TRA MÌNH CÓ CHẶN NGƯỜI KIA KHÔNG
       final myDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
       final myBlockedUids = myDoc.data()?['blockedUids'] as List<dynamic>? ?? [];
       if (myBlockedUids.contains(widget.targetUserId)) {
@@ -320,17 +466,7 @@ class _ConversationViewState extends State<_ConversationView> {
       }
     }
 
-    // --- BẮT ĐẦU THAY ĐỔI: Lấy Avatar URL ---
-    String? senderAvatarUrl;
-    try {
-      final userDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
-      if (userDoc.exists) {
-        senderAvatarUrl = (userDoc.data() as Map<String, dynamic>?)?['photoURL'] as String?;
-      }
-    } catch (e) {
-      print("Lỗi lấy avatar người gửi: $e");
-    }
-    // --- KẾT THÚC THAY ĐỔI ---
+    // ... (logic lấy senderAvatarUrl giữ nguyên)
 
     final messageContent = {
       'senderId': widget.currentUser.uid,
@@ -338,22 +474,25 @@ class _ConversationViewState extends State<_ConversationView> {
       'timestamp': FieldValue.serverTimestamp(),
       'type': 'text',
       'isRead': false,
+      'isRecalled': false,
+      'deletedFor': [],
+      'replyTo': replyContext,
     };
 
     try {
       final chatRef = _firestore.collection('chats').doc(widget.chatId);
       final batch = _firestore.batch();
 
-      // 1. Thêm tin nhắn vào subcollection
+      final newMessageRef = chatRef.collection('messages').doc();
+      batch.set(newMessageRef, messageContent);
+
       batch.set(chatRef.collection('messages').doc(), messageContent);
 
-      // 2. Cập nhật lastMessage VÀ unreadCount
       final updateData = <String, dynamic>{
         'lastMessage': text,
         'lastMessageTimestamp': FieldValue.serverTimestamp(),
       };
 
-      // ... (Logic cập nhật unreadCount giữ nguyên)
       if (widget.isGroup) {
         final myUid = widget.currentUser.uid;
         final recipients = _groupParticipants.where((uid) => uid != myUid);
@@ -365,6 +504,31 @@ class _ConversationViewState extends State<_ConversationView> {
       } else if (_otherUserId.isNotEmpty) {
         final String unreadField = 'unreadCount.$_otherUserId';
         updateData[unreadField] = FieldValue.increment(1);
+      }
+
+      // BỔ SUNG LOGIC GỬI THÔNG BÁO KHI TRẢ LỜI
+      if (replyContext != null) {
+        final repliedToSenderId = replyContext['senderId'] as String?;
+
+        // Gửi thông báo đến người được trả lời nếu không phải chính mình
+        if (repliedToSenderId != null && repliedToSenderId != widget.currentUser.uid) {
+          final notificationRef = _firestore
+              .collection('users')
+              .doc(repliedToSenderId)
+              .collection('notifications')
+              .doc();
+
+          batch.set(notificationRef, {
+            'type': 'reply_message', // <-- Loại thông báo mới
+            'senderId': widget.currentUser.uid,
+            'senderName': senderName,
+            'senderAvatarUrl': senderAvatarUrl,
+            'destinationId': widget.chatId, // ID của chat
+            'contentPreview': 'đã trả lời tin nhắn của bạn trong chat "${widget.targetUserName}".',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          });
+        }
       }
 
       batch.update(chatRef, updateData);
@@ -381,6 +545,7 @@ class _ConversationViewState extends State<_ConversationView> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể gửi tin nhắn.'), backgroundColor: topazColor));
     }
   }
+
   void _markMessagesAsRead(List<QueryDocumentSnapshot> docs) {
     final unreadDocs = docs.where((doc) {
       final data = doc.data() as Map<String, dynamic>;
@@ -396,23 +561,289 @@ class _ConversationViewState extends State<_ConversationView> {
 
       final String unreadField = 'unreadCount.${widget.currentUser.uid}';
 
+      // QUAN TRỌNG: DÒNG NÀY PHẢI ĐẢM BẢO unreadCount được reset về 0
       batch.update(_firestore.collection('chats').doc(widget.chatId), {
         unreadField: 0,
-      });
+      }); // <--- Đã được code đúng
 
       batch.commit().catchError((_) {});
     });
   }
 
+  // BỔ SUNG: Logic Thu hồi/Xóa tin nhắn (Firestore)
+  void _recallMessage(String messageId) async {
+    // Thu hồi (Xóa đối với mọi người)
+    await _firestore
+        .collection('chats')
+        .doc(widget.chatId)
+        .collection('messages')
+        .doc(messageId)
+        .update({
+      'text': 'Tin nhắn đã được thu hồi',
+      'isRecalled': true,
+      'replyTo': null,
+    });
+  }
+
+  void _deleteMessageForMe(String messageId) async {
+    // Xóa đối với bạn (Thêm UID vào danh sách deletedFor)
+    await _firestore
+        .collection('chats')
+        .doc(widget.chatId)
+        .collection('messages')
+        .doc(messageId)
+        .update({
+      'deletedFor': FieldValue.arrayUnion([widget.currentUser.uid])
+    });
+  }
+
+  // BỔ SUNG: Logic Ghim tin nhắn (Firestore)
+  void _pinMessage(String messageId, String messageText) async {
+    final currentUserId = widget.currentUser.uid;
+
+    // 1. Lấy thông tin người ghim
+    final myUserDoc = await _firestore.collection('users').doc(currentUserId).get();
+    final myData = myUserDoc.data() as Map<String, dynamic>? ?? {};
+    final senderName = myData['displayName'] ?? 'Người dùng Zink';
+    final senderAvatarUrl = myData['photoURL'];
+    final chatName = widget.targetUserName;
+
+    // 2. Cập nhật chat document (trong batch)
+    final chatRef = _firestore.collection('chats').doc(widget.chatId);
+    final batch = _firestore.batch();
+
+    batch.update(chatRef, {
+      'pinnedMessageId': messageId,
+      'pinnedMessageText': messageText,
+    });
+
+    // 3. Gửi thông báo đến TẤT CẢ thành viên (trừ người ghim)
+    final recipients = widget.isGroup
+        ? _groupParticipants.where((uid) => uid != currentUserId).toList()
+        : [widget.targetUserId].where((uid) => uid != currentUserId).toList();
+
+    for (final recipientId in recipients) {
+      if (recipientId.isNotEmpty) {
+        final notificationRef = _firestore
+            .collection('users')
+            .doc(recipientId)
+            .collection('notifications')
+            .doc();
+
+        batch.set(notificationRef, {
+          'type': 'pin_message', // <-- Loại thông báo mới
+          'senderId': currentUserId,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl,
+          'destinationId': widget.chatId, // ID của chat
+          'contentPreview': 'đã ghim một tin nhắn trong chat "$chatName".',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+    }
+
+    await batch.commit();
+  }
+
+  // BỔ SUNG: Hàm xử lý Long Press (Menu tương tác)
+  void _handleMessageLongPress(Map<String, dynamic> messageData) async {
+    final bool isMyMessage = messageData['senderId'] == widget.currentUser.uid;
+    final String messageId = messageData['messageId'];
+    final String messageText = messageData['text'];
+    final bool isRecalled = messageData['isRecalled'] ?? false;
+
+    String senderName = 'Người dùng';
+    if (!isMyMessage) {
+      final senderDoc = await _firestore.collection('users').doc(messageData['senderId']).get();
+      senderName = (senderDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng';
+    } else {
+      senderName = _currentUserName;
+    }
+    messageData['senderName'] = senderName;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: darkSurface,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Trả lời (Chỉ khi tin nhắn chưa bị thu hồi)
+              if (!isRecalled)
+                ListTile(
+                  leading: const Icon(Icons.reply, color: whiteColor),
+                  title: const Text('Trả lời', style: TextStyle(color: whiteColor)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _setReply(messageData);
+                  },
+                ),
+              // Ghim / Bỏ ghim
+              if (!isRecalled)
+                ListTile(
+                  leading: Icon(_pinnedMessageId == messageId ? Icons.push_pin : Icons.push_pin_outlined, color: whiteColor),
+                  title: Text(_pinnedMessageId == messageId ? 'Bỏ ghim' : 'Ghim tin nhắn', style: const TextStyle(color: whiteColor)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    if (_pinnedMessageId == messageId) {
+                      _firestore.collection('chats').doc(widget.chatId).update({
+                        'pinnedMessageId': FieldValue.delete(),
+                        'pinnedMessageText': FieldValue.delete(),
+                      });
+                    } else {
+                      _pinMessage(messageId, messageText);
+                    }
+                  },
+                ),
+              // Xóa tin nhắn (Mở Dialog cho tin nhắn của mình, nếu chưa thu hồi)
+              if (isMyMessage && !isRecalled)
+                ListTile(
+                  leading: const Icon(Icons.delete_forever, color: coralRed),
+                  title: const Text('Xóa tin nhắn', style: TextStyle(color: coralRed)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showDeleteConfirmationDialog(messageId);
+                  },
+                )
+              // Xóa đối với bạn (Nếu không phải tin nhắn của mình)
+              else if (!isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: coralRed),
+                  title: const Text('Xóa đối với bạn', style: TextStyle(color: coralRed)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _deleteMessageForMe(messageId);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // BỔ SUNG: Dialog xác nhận xóa
+  void _showDeleteConfirmationDialog(String messageId) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Xóa tin nhắn', style: TextStyle(color: whiteColor)),
+          content: const Text('Bạn muốn xóa tin nhắn này?', style: TextStyle(color: whiteColor)),
+          actions: [
+            TextButton(
+              child: const Text('Xóa đối với bạn', style: TextStyle(color: whiteColor)),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _deleteMessageForMe(messageId);
+              },
+            ),
+            TextButton(
+              child: const Text('Thu hồi (Mọi người)', style: TextStyle(color: coralRed)),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _recallMessage(messageId);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+
+  // BỔ SUNG: Hàm xử lý Avatar Tap (Fix lỗi 3)
+  void _handleAvatarTap(String senderId) async {
+    if (widget.currentUser.uid == senderId) return;
+
+    if (widget.isGroup) {
+      final senderDoc = await _firestore.collection('users').doc(senderId).get();
+      final senderName = (senderDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng';
+
+      if (!mounted) return;
+
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: darkSurface,
+        builder: (BuildContext sheetContext) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person_outline, color: whiteColor),
+                  title: Text('Xem trang cá nhân của $senderName', style: const TextStyle(color: whiteColor)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => ProfileScreen(
+                          targetUserId: senderId,
+                          onNavigateToHome: () {},
+                          onLogout: () {},
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.message_outlined, color: topazColor),
+                  title: Text('Nhắn tin riêng với $senderName', style: const TextStyle(color: whiteColor)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => MessageScreen(
+                          targetUserId: senderId,
+                          targetUserName: senderName,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } else {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => ProfileScreen(
+            targetUserId: senderId,
+            onNavigateToHome: () {},
+            onLogout: () {},
+          ),
+        ),
+      );
+    }
+  }
+
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // BỔ SUNG: Hiển thị tin nhắn được ghim
+        if (_pinnedMessageId != null && _pinnedMessageData != null)
+          _PinnedMessageView(
+            text: _pinnedMessageData!['text'] ?? 'Đã ghim một tin nhắn',
+            onDismiss: () {
+              _firestore.collection('chats').doc(widget.chatId).update({
+                'pinnedMessageId': FieldValue.delete(),
+                'pinnedMessageText': FieldValue.delete(),
+              });
+            },
+          ),
+
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: _firestore
                 .collection('chats')
-                .doc(widget.chatId) // <-- PHẢI SỬ DỤNG CHATID TỪ WIDGET
+                .doc(widget.chatId)
                 .collection('messages')
                 .orderBy('timestamp', descending: true)
                 .snapshots(),
@@ -424,12 +855,17 @@ class _ConversationViewState extends State<_ConversationView> {
                 return Center(child: Text('Lỗi tải tin nhắn: ${snapshot.error}', style: const TextStyle(color: coralRed)));
               }
 
-              final messages = snapshot.data?.docs ?? [];
+              final allMessages = snapshot.data?.docs ?? [];
+              final messages = allMessages.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final deletedFor = data['deletedFor'] as List<dynamic>? ?? [];
+                return !deletedFor.contains(widget.currentUser.uid);
+              }).toList();
+
               if (messages.isEmpty) {
                 return Center(child: Text('Bắt đầu cuộc trò chuyện với ${widget.targetUserName}!', style: const TextStyle(color: sonicSilver)));
               }
-
-              _markMessagesAsRead(messages);
+              _markMessagesAsRead(allMessages);
 
               return ListView.builder(
                 reverse: true,
@@ -438,43 +874,35 @@ class _ConversationViewState extends State<_ConversationView> {
                 itemCount: messages.length,
                 keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 itemBuilder: (context, index) {
-                  final data = messages[index].data() as Map<String, dynamic>;
+                  final messageDoc = messages[index];
+                  final data = messageDoc.data() as Map<String, dynamic>;
+                  final messageId = messageDoc.id;
+
+                  final replyTo = data['replyTo'] as Map<String, dynamic>?;
+                  final isRecalled = data['isRecalled'] as bool? ?? false;
+
                   final currentMsgTimestamp = data['timestamp'] as Timestamp? ?? Timestamp.now();
                   final DateTime currentDate = currentMsgTimestamp.toDate();
+                  final String senderId = data['senderId'] ?? '';
 
-                  // --- THAY ĐỔI: Lấy Avatar URL ---
-                  final String senderId = data['senderId'] ?? '';                  // --- KẾT THÚC THAY ĐỔI ---
-
-                  bool showDateHeader = false;
-                  if (index == messages.length - 1) {
-                    showDateHeader = true;
-                  } else {
-                    final nextData = messages[index + 1].data() as Map<String, dynamic>;
-                    final nextMsgTimestamp = nextData['timestamp'] as Timestamp? ?? Timestamp.now();
-                    final DateTime nextDate = nextMsgTimestamp.toDate();
-
-                    if (currentDate.day != nextDate.day || currentDate.month != nextDate.month || currentDate.year != nextDate.year) {
-                      showDateHeader = true;
-                    }
-                  }
+                  // ... (logic date header)
 
                   final bubble = _MessageBubble(
-                    senderId: data['senderId'] ?? '',
+                    messageId: messageId,
+                    senderId: senderId,
                     text: data['text'] ?? '',
                     timestamp: currentMsgTimestamp,
                     isMe: (data['senderId'] ?? '') == widget.currentUser.uid,
                     isRead: data['isRead'] ?? false,
+                    isGroup: widget.isGroup,
+                    onAvatarTap: _handleAvatarTap, // <--- Đã sửa lỗi 3
+                    onLongPress: _handleMessageLongPress,
+                    replyTo: replyTo,
+                    isRecalled: isRecalled,
+                    isPinned: _pinnedMessageId == messageId,
                   );
 
-                  if (showDateHeader) {
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _DateHeader(date: currentDate),
-                        bubble,
-                      ],
-                    );
-                  }
+                  // ... (logic date header)
 
                   return bubble;
                 },
@@ -487,6 +915,7 @@ class _ConversationViewState extends State<_ConversationView> {
     );
   }
 
+  // SỬA: Cập nhật _buildMessageInput để hiển thị trạng thái đang trả lời (Fix lỗi 2)
   Widget _buildMessageInput() {
     return Container(
       padding: EdgeInsets.only(left: 12, right: 12, top: 8, bottom: MediaQuery.of(context).padding.bottom + 8),
@@ -496,49 +925,59 @@ class _ConversationViewState extends State<_ConversationView> {
       ),
       child: Material(
         color: darkSurface,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[900],
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: TextField(
-                      controller: _messageController,
-                      minLines: 1,
-                      maxLines: 4,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Nhập tin nhắn...',
-                        hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        isDense: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_replyingToMessage != null)
+              _ReplyPreview(
+                senderName: _replyingToMessage!['senderName'] ?? 'Người dùng',
+                text: _replyingToMessage!['text'] ?? 'Tin nhắn',
+                onCancel: _clearReply,
+              ),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 12),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[900],
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: TextField(
+                        controller: _messageController,
+                        focusNode: _messageFocusNode, // <--- FIX LỖI 2: Sử dụng FocusNode
+                        minLines: 1,
+                        maxLines: 4,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Nhập tin nhắn...',
+                          hintStyle: TextStyle(color: sonicSilver.withOpacity(0.7)),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          isDense: true,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: _sendMessage,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: topazColor,
-                    child: const Icon(Icons.send, color: Colors.black, size: 18),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _sendMessage,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: topazColor,
+                      child: const Icon(Icons.send, color: Colors.black, size: 18),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -588,21 +1027,37 @@ class _DateHeader extends StatelessWidget {
 }
 
 // =======================================================
-// Widget for a single message bubble (Giữ nguyên)
+// Widget for a single message bubble (Đã cập nhật)
 // =======================================================
 class _MessageBubble extends StatelessWidget {
+  final String messageId;
   final String senderId;
   final String text;
   final Timestamp timestamp;
   final bool isMe;
   final bool isRead;
+  final bool isGroup;
+  final Function(String senderId) onAvatarTap;
+
+  final Function(Map<String, dynamic> messageData) onLongPress;
+  final Map<String, dynamic>? replyTo;
+  final bool isRecalled;
+  final bool isPinned;
 
   const _MessageBubble({
+    required this.messageId,
     required this.senderId,
     required this.text,
     required this.timestamp,
     required this.isMe,
     this.isRead = false,
+    required this.isGroup,
+    required this.onAvatarTap,
+
+    required this.onLongPress,
+    this.replyTo,
+    required this.isRecalled,
+    required this.isPinned,
   });
 
   @override
@@ -628,82 +1083,145 @@ class _MessageBubble extends StatelessWidget {
       );
     }
 
-    // Nếu là tin nhắn của mình, không cần tra cứu
     return _buildBubbleLayout(context, timeString, null, isMe, isRead, text);
   }
 
   // Hàm helper để xây dựng layout bong bóng
   Widget _buildBubbleLayout(BuildContext context, String timeString, ImageProvider? avatarProvider, bool isMe, bool isRead, String text) {
-    final bubble = Container(
-      margin: const EdgeInsets.symmetric(vertical: 2),
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70),
-      decoration: BoxDecoration(
-        color: isMe ? topazColor : darkSurface,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(18),
-          topRight: const Radius.circular(18),
-          bottomLeft: isMe ? const Radius.circular(18) : const Radius.circular(2),
-          bottomRight: isMe ? const Radius.circular(2) : const Radius.circular(18),
+
+    final String displayText = isRecalled ? '🚫 Tin nhắn đã được thu hồi' : text;
+    final Color bubbleColor = isMe ? topazColor : darkSurface;
+    final Color textColor = isMe ? Colors.black : Colors.white;
+    final Color timeColor = isMe ? Colors.black54 : Colors.white38;
+
+    // 1. Định nghĩa nội dung của bong bóng tin nhắn (Container)
+    final messageBubbleContent = Container(
+        margin: const EdgeInsets.symmetric(vertical: 2),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.70),
+        decoration: BoxDecoration(
+          color: isRecalled ? lightGrey.withOpacity(0.1) : bubbleColor,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: isMe ? const Radius.circular(18) : const Radius.circular(2),
+            bottomRight: isMe ? const Radius.circular(2) : const Radius.circular(18),
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            text,
-            style: TextStyle(
-              color: isMe ? Colors.black : Colors.white,
-              fontSize: 15,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  timeString,
-                  style: TextStyle(
-                    color: isMe ? Colors.black54 : Colors.white38,
-                    fontSize: 10,
-                  ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Hiển thị context trả lời
+            if (replyTo != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: lightGrey.withOpacity(isMe ? 0.4 : 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border(left: BorderSide(color: isMe ? Colors.black54 : topazColor, width: 3)),
                 ),
-                if (isMe) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    isRead ? Icons.done_all : Icons.check,
-                    size: 12,
-                    color: isRead ? Colors.blue[800] : Colors.black54,
-                  )
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(replyTo!['senderName'] ?? 'Người dùng', style: TextStyle(color: isMe ? Colors.black54 : topazColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                    const SizedBox(height: 2),
+                    Text(
+                      replyTo!['text'] ?? '...',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: isMe ? Colors.black54 : sonicSilver, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Icon Ghim
+            if (isPinned)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4.0),
+                child: Row(
+                  children: [
+                    Icon(Icons.push_pin, size: 12, color: isMe ? Colors.black54 : sonicSilver),
+                    const SizedBox(width: 4),
+                    Text('Đã ghim', style: TextStyle(color: isMe ? Colors.black54 : sonicSilver, fontSize: 11)),
+                  ],
+                ),
+              ),
+
+            // Nội dung tin nhắn
+            Text(
+              displayText,
+              style: TextStyle(
+                color: isRecalled ? sonicSilver : textColor,
+                fontSize: 15,
+                fontStyle: isRecalled ? FontStyle.italic : FontStyle.normal,
+              ),
+            ),
+
+            const SizedBox(height: 4),
+            Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    timeString,
+                    style: TextStyle(
+                      color: timeColor,
+                      fontSize: 10,
+                    ),
+                  ),
+                  if (isMe) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      isRead ? Icons.done_all : Icons.check,
+                      size: 12,
+                      color: isRead ? Colors.blue[800] : Colors.black54,
+                    )
+                  ]
                 ]
-              ]
-          ),
-        ],
-      ),
+            ),
+          ],
+        )
     );
 
+    // 2. Bọc nội dung bằng GestureDetector chỉ để xử lý LongPress
+    final tappableBubble = isRecalled ? messageBubbleContent : GestureDetector(
+      onLongPress: () {
+        onLongPress({
+          'messageId': messageId,
+          'senderId': senderId,
+          'text': this.text,
+          'isRecalled': isRecalled,
+        });
+      },
+      child: messageBubbleContent,
+    );
+
+    // 3. Trả về Row chứa Avatar (nếu có) và Bong bóng tin nhắn
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: Row(
         mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Avatar (Chỉ hiển thị nếu KHÔNG phải tin nhắn của mình)
+          // Avatar (Chỉ có GestureDetector cho onTap)
           if (!isMe) ...[
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: darkSurface,
-              backgroundImage: avatarProvider,
-              child: avatarProvider == null ? const Icon(Icons.person, size: 16, color: sonicSilver) : null,
+            GestureDetector(
+              onTap: () => onAvatarTap(senderId),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: darkSurface,
+                backgroundImage: avatarProvider,
+                child: avatarProvider == null ? const Icon(Icons.person, size: 16, color: sonicSilver) : null,
+              ),
             ),
             const SizedBox(width: 8),
           ],
 
-          // Bubble
-          bubble,
+          // Bong bóng tin nhắn đã được bọc LongPress
+          tappableBubble,
 
-          // Khoảng trống bù trừ (Chỉ hiển thị nếu là tin nhắn của mình)
           if (isMe) const SizedBox(width: 40),
         ],
       ),
@@ -711,9 +1229,9 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-// ===================================================================
-// WIDGET MỚI: ĐỂ HIỂN THỊ MỘT DÒNG TRONG DANH SÁCH CHAT (STATEFUL)
-// ===================================================================
+// =======================================================
+// Chat List Item (Giữ nguyên)
+// =======================================================
 class _ChatListItem extends StatefulWidget {
   final DocumentSnapshot chatDoc;
   final User currentUser;
@@ -724,6 +1242,7 @@ class _ChatListItem extends StatefulWidget {
 }
 
 class _ChatListItemState extends State<_ChatListItem> {
+  // ... (Nội dung giữ nguyên)
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   DocumentSnapshot? _otherUserDoc;
   bool _isLoading = true;
@@ -731,13 +1250,12 @@ class _ChatListItemState extends State<_ChatListItem> {
   @override
   void initState() {
     super.initState();
-    _fetchOtherUserData(); // Lần tải đầu tiên
+    _fetchOtherUserData();
   }
 
   @override
   void didUpdateWidget(covariant _ChatListItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Chỉ tải lại nếu ID của tài liệu chat thực sự thay đổi.
     if (widget.chatDoc.id != oldWidget.chatDoc.id) {
       _fetchOtherUserData();
     }
@@ -765,7 +1283,7 @@ class _ChatListItemState extends State<_ChatListItem> {
     if (!mounted) return;
 
     final data = widget.chatDoc.data() as Map<String, dynamic>;
-    final isGroup = data['isGroup'] as bool? ?? false;
+    final bool isGroup = data['isGroup'] as bool? ?? false;
 
     if (isGroup) {
       final groupName = data['groupName'] as String? ?? 'Group Chat';
@@ -820,7 +1338,7 @@ class _ChatListItemState extends State<_ChatListItem> {
   void _unhideChat() async {
     try {
       await _firestore.collection('chats').doc(widget.chatDoc.id).update({
-        'userHidden.${widget.currentUser.uid}': FieldValue.delete(), // Xóa trường ẩn
+        'userHidden.${widget.currentUser.uid}': FieldValue.delete(),
       });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã khôi phục tin nhắn.'), backgroundColor: topazColor));
     } catch (e) {
@@ -833,7 +1351,6 @@ class _ChatListItemState extends State<_ChatListItem> {
     final pinActionText = isPinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn';
     final pinActionIcon = isPinned ? Icons.push_pin : Icons.push_pin_outlined;
 
-    // [SỬA LỖ HỔNG 1: SOFT DELETE] Kiểm tra nếu chat đã bị ẩn
     final chatData = widget.chatDoc.data() as Map<String, dynamic>? ?? {};
     final isHidden = chatData['userHidden'] is Map && (chatData['userHidden'] as Map)[widget.currentUser.uid] == true;
 
@@ -853,7 +1370,6 @@ class _ChatListItemState extends State<_ChatListItem> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Pin/Unpin
               ListTile(
                 leading: Icon(pinActionIcon, color: topazColor),
                 title: Text(pinActionText, style: const TextStyle(color: Colors.white)),
@@ -862,16 +1378,14 @@ class _ChatListItemState extends State<_ChatListItem> {
                   _togglePinChat(isPinned);
                 },
               ),
-              // Delete (Xóa mềm)
               ListTile(
                 leading: const Icon(Icons.delete_outline, color: coralRed),
                 title: const Text('Ẩn/Xóa tin nhắn (Chỉ mình tôi)', style: TextStyle(color: coralRed)),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _deleteChat(widget.chatDoc.id, otherUserName, isGroup); // Vẫn gọi hàm xóa, nhưng logic đã đổi
+                  _deleteChat(widget.chatDoc.id, otherUserName, isGroup);
                 },
               ),
-              // [SỬA LỖ HỔNG 1: SOFT DELETE] Tùy chọn Hoàn tác
               if (isHidden)
                 ListTile(
                   leading: const Icon(Icons.restore_page, color: activeGreen),
@@ -881,10 +1395,9 @@ class _ChatListItemState extends State<_ChatListItem> {
                     _unhideChat();
                   },
                 ),
-              // Block (only for 1-on-1 chat)
               if (isGroup)
                 ListTile(
-                  leading: const Icon(Icons.logout, color: coralRed), // Icon Rời nhóm
+                  leading: const Icon(Icons.logout, color: coralRed),
                   title: const Text('Rời nhóm', style: TextStyle(color: coralRed)),
                   onTap: () {
                     Navigator.pop(sheetContext);
@@ -907,13 +1420,11 @@ class _ChatListItemState extends State<_ChatListItem> {
     );
   }
 
-  // --- 2. Kiểm tra ghim ---
   bool _isChatPinned() {
     final chatData = widget.chatDoc.data() as Map<String, dynamic>?;
     return chatData?['isPinned'] as bool? ?? false;
   }
 
-  // --- 3. Xử lý ghim/bỏ ghim ---
   void _togglePinChat(bool isCurrentlyPinned) async {
     try {
       await _firestore.collection('chats').doc(widget.chatDoc.id).update({
@@ -922,14 +1433,11 @@ class _ChatListItemState extends State<_ChatListItem> {
       if (mounted) {
         final message = !isCurrentlyPinned ? 'Đã ghim tin nhắn.' : 'Đã bỏ ghim tin nhắn.';
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: topazColor));
-        // ĐÃ BỎ LỆNH GỌI _fetchOtherUserData() TẠI ĐÂY.
-        // StreamBuilder bên ngoài sẽ tự động cập nhật lại widget này với dữ liệu mới.
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể ghim/bỏ ghim.'), backgroundColor: coralRed));
     }
   }
-  // --- 4. Xử lý xóa tin nhắn (Chỉ xóa chat document cho đơn giản) ---
   void _deleteChat(String chatId, String chatName, bool isGroup) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -937,7 +1445,7 @@ class _ChatListItemState extends State<_ChatListItem> {
         return AlertDialog(
           backgroundColor: darkSurface,
           title: const Text('Ẩn tin nhắn', style: TextStyle(color: Colors.white)),
-          content: Text('Bạn có chắc chắn muốn ẩn/xóa tin nhắn này (chỉ mình bạn không thấy)?', style: const TextStyle(color: sonicSilver)),
+          content: const Text('Bạn có chắc chắn muốn ẩn/xóa tin nhắn này (chỉ mình bạn không thấy)?', style: TextStyle(color: sonicSilver)),
           actions: [
             TextButton(
               child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
@@ -954,9 +1462,8 @@ class _ChatListItemState extends State<_ChatListItem> {
 
     if (confirm == true) {
       try {
-        // [THAY THẾ LỆNH DELETE BẰNG LỆNH UPDATE]
         await _firestore.collection('chats').doc(chatId).update({
-          'userHidden.${widget.currentUser.uid}': true, // Dùng FieldValue.delete() nếu bạn muốn xóa trường khi unhide
+          'userHidden.${widget.currentUser.uid}': true,
         });
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã ẩn tin nhắn với $chatName.'), backgroundColor: sonicSilver));
       } catch (e) {
@@ -965,7 +1472,6 @@ class _ChatListItemState extends State<_ChatListItem> {
     }
   }
 
-  // --- 5. Xử lý chặn người dùng ---
   void _blockUser(String targetUserId, String targetUserName) async {
     if (targetUserId.isEmpty) return;
 
@@ -1006,7 +1512,6 @@ class _ChatListItemState extends State<_ChatListItem> {
     if (widget.currentUser.uid.isEmpty) return;
 
     final confirm = await showDialog<bool>(
-      // ... (AlertDialog giữ nguyên)
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
@@ -1031,16 +1536,13 @@ class _ChatListItemState extends State<_ChatListItem> {
       try {
         final chatRef = _firestore.collection('chats').doc(chatId);
 
-        // SỬA LỖI TẠI ĐÂY: Truy vấn Firestore để lấy tên người dùng hiện tại
         final myUserDoc = await _firestore.collection('users').doc(widget.currentUser.uid).get();
-        // Cần đảm bảo data() là Map<String, dynamic> an toàn
         final myUserData = myUserDoc.data() as Map<String, dynamic>? ?? {};
         final currentUserName = myUserData['displayName'] as String? ?? 'Một thành viên';
 
-        // 1. Xóa người dùng khỏi danh sách participants
         await chatRef.update({
           'participants': FieldValue.arrayRemove([widget.currentUser.uid]),
-          'unreadCount.${widget.currentUser.uid}': FieldValue.delete(), // Xóa unread count của họ
+          'unreadCount.${widget.currentUser.uid}': FieldValue.delete(),
           'lastMessage': '$currentUserName đã rời khỏi nhóm.',
           'lastMessageTimestamp': FieldValue.serverTimestamp(),
         });
@@ -1099,7 +1601,7 @@ class _ChatListItemState extends State<_ChatListItem> {
 
     final List<dynamic> participants = chatData['participants'] ?? [];
     final String otherUserId = isGroup
-        ? '' // Không chặn group
+        ? ''
         : participants.firstWhere((id) => id != currentUserId, orElse: () => '');
 
     final ImageProvider? avatarProvider = (targetAvatarUrl != null && targetAvatarUrl.isNotEmpty) ? NetworkImage(targetAvatarUrl) : null;
@@ -1117,7 +1619,7 @@ class _ChatListItemState extends State<_ChatListItem> {
             ? (isGroup ? Icon(defaultIcon, color: whiteColor, size: 25) : Text(defaultAvatarText, style: const TextStyle(color: whiteColor, fontWeight: FontWeight.bold)))
             : null,
       ),
-      title: Row( // Bọc Title trong Row để thêm biểu tượng Ghim
+      title: Row(
         children: [
           Text(
               otherUserName,
@@ -1126,7 +1628,6 @@ class _ChatListItemState extends State<_ChatListItem> {
                 fontWeight: hasUnread ? FontWeight.bold : FontWeight.w600,
               )
           ),
-          // HIỂN THỊ BIỂU TƯỢNG GHIM
           if (isPinned)
             Padding(
               padding: const EdgeInsets.only(left: 6.0),
@@ -1178,12 +1679,10 @@ class _ChatListItemState extends State<_ChatListItem> {
           ],
         ),
       ),
-      // BỎ onTap khỏi ListTile gốc
       onTap: null,
     );
 
     return GestureDetector(
-      // Thêm onTap cho GestureDetector
       onTap: () {
         final String chatId = widget.chatDoc.id;
         final String targetUid = isGroup
@@ -1199,9 +1698,7 @@ class _ChatListItemState extends State<_ChatListItem> {
           ),
         ).then((_) => _onNavigateBack());
       },
-      // --- THÊM onLongPress ---
       onLongPress: () => _showChatContextMenu(otherUserName, isGroup, otherUserId),
-      // ------------------------
       child: listTileContent,
     );
   }

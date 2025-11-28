@@ -104,6 +104,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     try {
       DocumentSnapshot userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
       String creatorName = (userDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng';
+      String? creatorAvatarUrl = (userDoc.data() as Map<String, dynamic>?)?['photoURL']; // Đã khai báo
 
       final newChatDoc = await _firestore.collection('chats').add({
         'isGroup': true,
@@ -120,6 +121,35 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         // [ĐÃ KHẮC PHỤC] Thêm trường isPinned mặc định là false
         'isPinned': false,
       });
+
+      final chatId = newChatDoc.id; // Lấy ID của nhóm vừa tạo
+
+      // 3. BỔ SUNG LOGIC GỬI THÔNG BÁO TẠO NHÓM
+      final WriteBatch batch = _firestore.batch();
+
+      // Lặp qua TẤT CẢ thành viên (chỉ những người được chọn)
+      final invitedParticipants = _selectedUids;
+
+      for (final userIdToNotify in invitedParticipants) {
+        final notificationRef = _firestore
+            .collection('users')
+            .doc(userIdToNotify)
+            .collection('notifications')
+            .doc();
+
+        batch.set(notificationRef, {
+          'type': 'group_invite', // <-- Loại thông báo mới
+          'senderId': currentUser.uid,
+          'senderName': creatorName,
+          'senderAvatarUrl': creatorAvatarUrl,
+          'destinationId': chatId, // ID của chat
+          'contentPreview': 'đã mời bạn tham gia nhóm "$groupName".',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
+      }
+
+      await batch.commit();
 
       if (mounted) {
         Navigator.of(context).pushReplacement(

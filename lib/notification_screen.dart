@@ -10,6 +10,7 @@ import 'reels_screen.dart';
 import 'comment_screen.dart'; // <-- THÊM DÒNG NÀY
 import 'models/comment_model.dart'; // <-- THÊM DÒNG NÀY
 import 'reels_screen.dart'; // <-- THÊM DÒNG NÀY
+import 'message_screen.dart';
 
 // Import các màn hình/model cần thiết cho điều hướng
 // Đảm bảo các lớp giả định này tồn tại (hoặc được định nghĩa ở đây/đã import)
@@ -138,7 +139,10 @@ class SocialNotificationTile extends StatelessWidget {
       case 'comment': return Icons.question_answer_rounded;
       case 'my_post_save': return Icons.bookmark_rounded;
       case 'suggest_page': return Icons.star_rounded;
-      case 'tag_post': case 'tag_comment': case 'tag_story': return Icons.alternate_email_rounded;
+      case 'tag_post': case 'tag_comment':case 'tag_story': return Icons.alternate_email_rounded;
+      case 'reply_message': return Icons.reply_rounded;
+      case 'pin_message': return Icons.push_pin_rounded;
+      case 'group_invite': return Icons.group_add_rounded;
       default: return Icons.notifications_none;
     }
   }
@@ -181,6 +185,17 @@ class SocialNotificationTile extends StatelessWidget {
       case 'friend_request':
         actionText = 'đã gửi cho bạn lời mời kết bạn.';
         break;
+    // --- PHẦN BỔ SUNG MỚI (Tin nhắn) ---
+      case 'reply_message':
+        actionText = data['contentPreview'] as String? ?? 'đã trả lời tin nhắn của bạn.';
+        break;
+      case 'pin_message':
+        actionText = data['contentPreview'] as String? ?? 'đã ghim một tin nhắn.';
+        break;
+      case 'group_invite':
+        actionText = data['contentPreview'] as String? ?? 'đã mời bạn tham gia một nhóm.';
+        break;
+    // --- KẾT THÚC PHẦN BỔ SUNG ---
 
     // --- PHẦN BỔ SUNG MỚI ---
     // Thêm các loại tương tác theo yêu cầu của bạn
@@ -512,6 +527,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
           );
         } else {
           targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy người dùng này.');
+        }
+      }
+
+      // --- TRƯỜNG HỢP CHAT/MESSAGE MỚI ---
+      else if (['reply_message', 'pin_message', 'group_invite'].contains(type)) {
+        if (destinationId == null) {
+          targetScreen = const PlaceholderScreen(title: 'Lỗi', content: 'Không tìm thấy ID cuộc trò chuyện.');
+        } else {
+          // Điều hướng đến MessageScreen, sử dụng destinationId (là chatId)
+          targetScreen = MessageScreen(
+            targetUserId: destinationId,
+            targetUserName: data['senderName'] ?? 'Chat', // Tên người gửi/người mời
+          );
         }
       }
 
