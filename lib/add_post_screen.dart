@@ -168,7 +168,14 @@ class _AddPostContentState extends State<AddPostContent> {
 
       final newPostId = newPostRef.id;
 
-      // --- BẮT ĐẦU LOGIC GỬI THÔNG BÁO TAG ---
+      // --- BẮT ĐẦU LOGIC GỬI THÔNG BÁO TAG VÀ CẬP NHẬT POSTS COUNT ---
+      final userDocRef = _firestore.collection('users').doc(user.uid);
+      await userDocRef.update({'postsCount': FieldValue.increment(1)});
+      print("DEBUG 6: Đã cập nhật postsCount thành công.");
+      // =======================================================
+
+
+      // --- BẮT ĐẦU LOGIC GỬI THÔNG BÁO TAG (GIỮ NGUYÊN) ---
       final WriteBatch tagBatch = _firestore.batch();
 
       // 2. Phân tích caption để tìm tag @username
@@ -197,19 +204,22 @@ class _AddPostContentState extends State<AddPostContent> {
               .doc();
 
           tagBatch.set(tagNotificationRef, {
-            'type': 'tag_post', // <-- Loại thông báo mới
+            'type': 'tag_post',
             'senderId': user.uid,
             'senderName': displayName,
             'senderAvatarUrl': userAvatarUrl,
-            'destinationId': newPostId, // ID của bài viết vừa tạo
-            'contentPreview': 'đã nhắc đến bạn trong một bài viết.', // <--- DÒNG NÀY            'timestamp': FieldValue.serverTimestamp(),
+            'destinationId': newPostId,
+            'contentPreview': 'đã nhắc đến bạn trong một bài viết.',
+            'timestamp': FieldValue.serverTimestamp(),
             'isRead': false,
           });
         }
       }
 
       // 5. Thực thi batch thông báo
-      await tagBatch.commit();
+      if (mentionedUserIds.isNotEmpty) {
+        await tagBatch.commit();
+      }
       // --- KẾT THÚC LOGIC GỬI THÔNG BÁO TAG ---
 
       print("--- GỠ LỖI THÀNH CÔNG ---");

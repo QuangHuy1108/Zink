@@ -197,6 +197,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 }
 
+class FollowersScreen extends StatelessWidget {
+  final String listType; // 'followers' or 'following'
+  final String profileName;
+  final List<String> userIds;
+  final String profileUserId;
+
+  const FollowersScreen({
+    super.key,
+    required this.listType,
+    required this.profileName,
+    required this.userIds,
+    required this.profileUserId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String title = listType == 'followers' ? 'Người theo dõi' : 'Đang theo dõi';
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text('$title của $profileName', style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.black,
+      ),
+      body: userIds.isEmpty
+          ? Center(child: Text('Chưa có $title nào.', style: const TextStyle(color: sonicSilver)))
+          : ListView.builder(
+        itemCount: userIds.length,
+        itemBuilder: (context, index) {
+          // TODO: Trong bản thực tế, bạn cần fetch data từ Firestore dựa trên userIds[index]
+          return ListTile(
+            leading: const CircleAvatar(backgroundColor: darkSurface, child: Icon(Icons.person, color: sonicSilver)),
+            title: Text('ID: ${userIds[index]}', style: const TextStyle(color: Colors.white)),
+            subtitle: Text('Đang hiển thị ID người dùng.', style: const TextStyle(color: sonicSilver)),
+          );
+        },
+      ),
+    );
+  }
+}
+
 // =======================================================
 // WIDGET CHÍNH: ProfileScreen
 // =======================================================
@@ -240,6 +281,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     if (!_isMyProfile && _currentUser != null) {
       _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
+    }
+  }
+
+  void _navigateToUserList(String listType, String profileName, List<String> userIds, bool isLocked) {
+    if (!isLocked) {
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => FollowersScreen(
+              listType: listType,
+              profileName: profileName,
+              userIds: userIds,
+              profileUserId: _profileUserId,
+            ),
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tài khoản này đã khóa danh sách người theo dõi/đang theo dõi.'),
+            backgroundColor: sonicSilver,
+          ),
+        );
+      }
     }
   }
 
@@ -423,55 +490,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Widget _buildStatsBlock(int posts, int followers, int following) {
+  Widget _buildStatsBlock(
+      int posts,
+      int followers,
+      int following,
+      VoidCallback onFollowersTap, // NEW
+      VoidCallback onFollowingTap // NEW
+      ) {
     // Khoảng cách cố định giữa các mục (Điều chỉnh giá trị này để "xích vô" hoặc "xích ra")
     final double innerSpacing = 24.0;
 
-    // Độ rộng đối xứng cố định cho hai mục bên (để đảm bảo tâm nằm đúng giữa)
-    // 90.0 là ước tính cho nhãn dài nhất ("Đang theo dõi").
+    // Độ rộng đối xứng cố định cho hai mục bên (để đảm bảo tâm nằm đúng giữa).
     final double sideItemWidth = 90.0;
 
     return Row(
-      // Căn giữa toàn bộ khối (đảm bảo khối này nằm giữa màn hình)
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // 1. Bài viết (Buộc vào Khung Đối xứng)
+        // 1. Bài viết (Không có hành động tap)
         SizedBox(
           width: sideItemWidth,
-          child: _buildStatItem(posts, 'Bài viết'),
+          child: _buildStatItem(posts, 'Bài viết', () {}), // Pass empty onTap
         ),
 
-        // Khoảng cách cố định (Điều chỉnh để xích lại gần hơn)
         SizedBox(width: innerSpacing),
 
-        // 2. Người theo dõi (Nằm ở giữa - không cần Khung Đối xứng)
-        _buildStatItem(followers, 'Người theo dõi'),
+        // 2. Người theo dõi (Có hành động tap)
+        _buildStatItem(followers, 'Người theo dõi', onFollowersTap), // Pass Followers callback
 
-        // Khoảng cách cố định (Điều chỉnh để xích lại gần hơn)
         SizedBox(width: innerSpacing),
 
-        // 3. Đang theo dõi (Buộc vào Khung Đối xứng)
+        // 3. Đang theo dõi (Có hành động tap)
         SizedBox(
           width: sideItemWidth,
-          child: _buildStatItem(following, 'Đang theo dõi'),
+          child: _buildStatItem(following, 'Đang theo dõi', onFollowingTap), // Pass Following callback
         ),
       ],
     );
   }
 
-  Widget _buildStatItem(int count, String label) {
-    return Column(
-      children: [
-        Text(
-          count.toString(),
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 14),
-        ),
-      ],
+  Widget _buildStatItem(int count, String label, VoidCallback onTap) { // Thêm onTap
+    return GestureDetector(
+      onTap: onTap, // Xử lý sự kiện nhấn
+      child: Column(
+        children: [
+          Text(
+            count.toString(),
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 14),
+          ),
+        ],
+      ),
     );
   }
 
@@ -851,7 +923,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final String displayedTitle = userData['title'] ?? userData['bio'] ?? '';
         final String displayedBio = userData['bio'] ?? userData['title'] ?? '';
         final bool isAccountLocked = userData['isPrivate'] ?? false;
-        final bool lockStats = userData['lockFollowerFollowing'] ?? false; // Lấy trường mới
+        final bool lockStats = userData['lockFollowerFollowing'] ?? false;
         final String? avatarUrl = userData['photoURL'] as String?;
         final String? coverUrl = userData['coverImageUrl'] as String?;
         final List<String> followers = List<String>.from(userData['followers'] ?? []);
@@ -871,12 +943,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           body: Column(
             children: [
+              // ĐÃ SỬA LỖI: Cung cấp đủ 13 tham số cho hàm _buildProfileHeaderContent
               _buildProfileHeaderContent(
                   context, displayedName, displayedTitle, displayedBio,
                   avatarUrl, avatarImageProvider,
                   postsCount, followers.length, following.length,
                   isAccountLocked,
-                  lockStats // TRUYỀN BIẾN MỚI
+                  lockStats,
+                  followers, // Tham số 12
+                  following // Tham số 13
               ),
               _buildGalleryTabs(),
               Expanded(
@@ -916,18 +991,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
     );
   }
-
   // --- CẬP NHẬT: BỔ SUNG BIẾN lockStats VÀ LOGIC KIỂM TRA ---
   Widget _buildProfileHeaderContent(
       BuildContext context, String name, String title, String bio,
       String? avatarPathOrUrl, ImageProvider? avatarImageProvider,
       int postsCount, int followersCount, int followingCount,
       bool isAccountLocked,
-      bool lockStats
+      bool lockStats,
+      List<String> followers, // Thêm danh sách followers
+      List<String> following // Thêm danh sách following
       ) {
     final heroTag = 'userAvatar_$_profileUserId';
 
-    // CẢI TIẾN LOGIC: Ẩn khi là người lạ VÀ (tài khoản bị khóa HOẶC thống kê bị khóa)
+    // Xác định quyền xem danh sách: Là chủ tài khoản HOẶC Chủ tài khoản không khóa (lockStats = false)
+    final bool canViewLists = _isMyProfile || !lockStats;
+
+    // Xác định xem có cần khóa danh sách (truyền vào hàm _navigateToUserList)
+    final bool isFollowersListLocked = !canViewLists;
+    final bool isFollowingListLocked = !canViewLists;
+
+    // Define Navigation Actions (Followers)
+    final VoidCallback onFollowersTap = () => _navigateToUserList(
+        'followers',
+        name,
+        followers,
+        isFollowersListLocked
+    );
+
+    // Define Navigation Actions (Following)
+    final VoidCallback onFollowingTap = () => _navigateToUserList(
+        'following',
+        name,
+        following,
+        isFollowingListLocked
+    );
+
     final bool hideSensitiveStats = !_isMyProfile && (isAccountLocked || lockStats);
 
     return Padding(
@@ -940,7 +1038,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildStatsBlock(
               postsCount,
               hideSensitiveStats ? 0 : followersCount,
-              hideSensitiveStats ? 0 : followingCount
+              hideSensitiveStats ? 0 : followingCount,
+              onFollowersTap, // Pass Followers action
+              onFollowingTap // Pass Following action
           ),
           const SizedBox(height: 20),
           if (bio.isNotEmpty)
