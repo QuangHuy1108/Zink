@@ -57,6 +57,10 @@ class _MessageScreenState extends State<MessageScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   User? _currentUser;
   String? _chatId;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  final FocusNode _searchFocusNode = FocusNode();
+  bool _showSearchField = false;
 
   @override
   @override
@@ -65,6 +69,64 @@ class _MessageScreenState extends State<MessageScreen> {
     _currentUser = _auth.currentUser;
     if (_currentUser != null) {
       _initializeChatLogic();
+    }
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchFocusNode.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildCustomTitle(String defaultTitle, bool isListView) {
+    // Nếu KHÔNG phải ListView hoặc đang ở ListView nhưng không bật tìm kiếm, trả về tiêu đề tĩnh
+    if (!isListView || !_showSearchField) {
+      return Text(defaultTitle, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold));
+    }
+
+    // Chỉ khi là ListView VÀ bật tìm kiếm
+    return TextField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        autofocus: true,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: 'Tìm kiếm tin nhắn, nhóm...',
+          hintStyle: TextStyle(color: sonicSilver.withOpacity(0.8)),
+          filled: true,
+          fillColor: darkSurface,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          isDense: true,
+          suffixIcon: _searchQuery.isNotEmpty ?
+          IconButton(
+            icon: const Icon(Icons.clear, color: sonicSilver),
+            onPressed: () => _searchController.clear(),
+            splashRadius: 20,
+          ) : null,
+        ),
+        onChanged: (text) {
+          if (text.isEmpty && _searchQuery.isNotEmpty) {
+            if (mounted) setState(() { _searchQuery = ''; });
+          }
+        }
+    );
+  }
+
+  void _onSearchChanged() {
+    final query = _searchController.text.trim();
+    if (_searchQuery != query) {
+      if (mounted) {
+        setState(() {
+          _searchQuery = query;
+        });
+      }
     }
   }
 
@@ -123,12 +185,31 @@ class _MessageScreenState extends State<MessageScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        leading: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.of(context).pop()),
-        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        // SỬA: Điều chỉnh leading
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () {
+            // SỬA: Nếu đang tìm kiếm VÀ ở ListView, tắt chế độ tìm kiếm
+            if (isListView && _showSearchField) {
+              setState(() {
+                _showSearchField = false;
+                _searchController.clear();
+                _searchFocusNode.unfocus();
+              });
+            } else {
+              Navigator.of(context).pop(); // Nếu không, pop màn hình
+            }
+          },
+        ),
+
+        // SỬA CÁCH HIỂN THỊ TITLE: (Sử dụng hàm mới)
+        title: _buildCustomTitle(title, isListView),
+
         backgroundColor: Colors.black,
         elevation: 0.5,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: isListView ? [
+          // Nút tạo nhóm
           IconButton(
             icon: const Icon(Icons.group_add_rounded, color: topazColor),
             onPressed: () {
@@ -137,9 +218,48 @@ class _MessageScreenState extends State<MessageScreen> {
               );
             },
           ),
+
+          // Nút Tìm kiếm/Clear (Chỉ hiển thị khi ở ListView)
+          if (!_showSearchField)
+            IconButton(
+              icon: const Icon(Icons.search, color: sonicSilver),
+              onPressed: () {
+                setState(() => _showSearchField = true);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  FocusScope.of(context).requestFocus(_searchFocusNode);
+                });
+              },
+            ),
         ] : null,
       ),
       body: _buildBody(),
+    );
+  }
+
+  Widget _buildSearchField() {
+    return TextField(
+        controller: _searchController,
+        focusNode: _searchFocusNode, // <--- GÁN FOCUS NODE
+        autofocus: true,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: 'Tìm kiếm tin nhắn, nhóm...',
+          hintStyle: TextStyle(color: sonicSilver.withOpacity(0.8)),
+          filled: true,
+          fillColor: darkSurface,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          isDense: true,
+        ),
+        onChanged: (text) {
+          // Tùy chọn: Nếu người dùng xóa hết text, tự động thoát chế độ tìm kiếm
+          if (text.isEmpty && _searchQuery.isNotEmpty) {
+            if (mounted) setState(() { _searchQuery = ''; });
+          }
+        }
     );
   }
 
@@ -149,7 +269,7 @@ class _MessageScreenState extends State<MessageScreen> {
     }
 
     if (_chatId == 'LIST_VIEW') {
-      return _ChatListView(currentUser: _currentUser!);
+      return _ChatListView(currentUser: _currentUser!, searchQuery: _searchQuery);
     }
 
     return FutureBuilder<DocumentSnapshot>(
@@ -190,7 +310,8 @@ class _MessageScreenState extends State<MessageScreen> {
 // =======================================================
 class _ChatListView extends StatelessWidget {
   final User currentUser;
-  const _ChatListView({required this.currentUser});
+  final String searchQuery;
+  const _ChatListView({required this.currentUser, required this.searchQuery});
 
   @override
   Widget build(BuildContext context) {
@@ -212,16 +333,28 @@ class _ChatListView extends StatelessWidget {
         final chatDocs = (snapshot.data?.docs ?? []).where((doc) {
           final data = doc.data() as Map<String, dynamic>? ?? {};
           final isHidden = data['userHidden'] is Map && (data['userHidden'] as Map)[currentUser.uid] == true;
+
+          // SỬA LỖI: CHỈ LỌC CÁC TIN NHẮN BỊ ẨN, KHÔNG LỌC THEO TÊN
+          // Việc lọc theo tên sẽ được xử lý ở cấp _ChatListItem
           return !isHidden;
         }).toList();
 
         if (chatDocs.isEmpty) {
+          // SỬA: Hiển thị thông báo khi không tìm thấy
+          if (searchQuery.isNotEmpty) {
+            return Center(child: Text('Không tìm thấy kết quả nào cho "$searchQuery"', style: const TextStyle(color: sonicSilver)));
+          }
           return const Center(child: Text('Chưa có cuộc trò chuyện nào.', style: TextStyle(color: sonicSilver)));
         }
 
+        // SỬA: Truyền searchQuery vào _ChatListItem
         return ListView.builder(
           itemCount: chatDocs.length,
-          itemBuilder: (context, index) => _ChatListItem(chatDoc: chatDocs[index], currentUser: currentUser),
+          itemBuilder: (context, index) => _ChatListItem(
+            chatDoc: chatDocs[index],
+            currentUser: currentUser,
+            searchQuery: searchQuery, // TRUYỀN QUERY XUỐNG
+          ),
         );
       },
     );
@@ -1235,14 +1368,13 @@ class _MessageBubble extends StatelessWidget {
 class _ChatListItem extends StatefulWidget {
   final DocumentSnapshot chatDoc;
   final User currentUser;
-  const _ChatListItem({required this.chatDoc, required this.currentUser});
-
+  final String searchQuery;
+  const _ChatListItem({required this.chatDoc, required this.currentUser, required this.searchQuery});
   @override
   State<_ChatListItem> createState() => _ChatListItemState();
 }
 
 class _ChatListItemState extends State<_ChatListItem> {
-  // ... (Nội dung giữ nguyên)
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   DocumentSnapshot? _otherUserDoc;
   bool _isLoading = true;
@@ -1590,6 +1722,18 @@ class _ChatListItemState extends State<_ChatListItem> {
     final userData = _otherUserDoc!.data() as Map<String, dynamic>;
     final String otherUserName = isGroup ? (userData['displayName'] ?? 'Group Chat') : (userData['displayName'] ?? 'Người dùng');
     final String? targetAvatarUrl = userData['photoURL'] as String?;
+
+    if (widget.searchQuery.isNotEmpty) {
+      final queryLower = widget.searchQuery.toLowerCase();
+      final nameLower = otherUserName.toLowerCase();
+
+      // Kiểm tra khớp với tên người dùng/tên nhóm
+      final nameMatch = nameLower.contains(queryLower);
+
+      if (!nameMatch) {
+        return const SizedBox.shrink(); // Ẩn nếu không khớp tên/nhóm
+      }
+    }
 
     final String lastMessage = chatData['lastMessage'] ?? 'Bắt đầu cuộc trò chuyện...';
     final Timestamp? lastMessageTimestamp = chatData['lastMessageTimestamp'];

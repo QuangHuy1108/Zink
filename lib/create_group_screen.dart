@@ -38,6 +38,15 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     super.initState();
     _loadFriendsList();
     _searchController.addListener(_onSearchChanged);
+    _groupNameController.addListener(_onGroupNameChanged);
+  }
+
+  void _onGroupNameChanged() {
+    // Gọi setState để buộc Widget (nút Tạo) phải được đánh giá lại
+    // dựa trên nội dung mới của _groupNameController.
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -45,6 +54,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     _groupNameController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _groupNameController.removeListener(_onGroupNameChanged);
     super.dispose();
   }
 
@@ -179,8 +189,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         actions: [
           TextButton(
             // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
-            onPressed: _selectedUids.isNotEmpty && _groupNameController.text.trim().isNotEmpty && !_isLoading ? _createGroup : null,
-            child: _isLoading
+            onPressed: _selectedUids.isNotEmpty && _groupNameController.text.trim().isNotEmpty && !_isLoading
+                ? _createGroup
+                : null,            child: _isLoading
                 ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: topazColor)))
             // [KHẮC PHỤC LỖI 1] Kiểm tra _selectedUids
                 : Text('Tạo', style: TextStyle(color: _selectedUids.isNotEmpty && _groupNameController.text.trim().isNotEmpty ? topazColor : sonicSilver.withOpacity(0.5))),
