@@ -1,19 +1,19 @@
+// lib/profile_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:ui';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import 'dart:developer' as developer;
 
-// Import các lớp cần thiết từ dự án của bạn (đã được sửa trong các bước trước)
-import 'post_detail_screen.dart';
-import 'message_screen.dart';
+// Import các lớp cần thiết từ dự án của bạn (Source of truth for colors)
+// SỬA: Ẩn các hằng số màu bị trùng lặp từ các file khác.
+import 'post_detail_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
+import 'message_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
+import 'utils/app_colors.dart'; // Nguồn màu chính thức
 
-// --- Giả định các lớp/hàm cần thiết được định nghĩa ở đây hoặc đã được import ---
-class PostDetailScreen extends StatelessWidget { final Map<String, dynamic> postData; const PostDetailScreen({super.key, required this.postData}); @override Widget build(BuildContext context) => PlaceholderScreen(title: "Post Detail", content: "Post Detail Placeholder");}
-class PlaceholderScreen extends StatelessWidget { final String title; final String content; const PlaceholderScreen({super.key, required this.title, required this.content}); @override Widget build(BuildContext context) => Scaffold(backgroundColor: Colors.black, appBar: AppBar(title: Text(title, style: const TextStyle(color: Colors.white))), body: Center(child: Text(content, style: const TextStyle(color: sonicSilver)))); }
-// Đã xóa FullScreenImageView
-// Lớp FullScreenImageView đã được chuyển logic trực tiếp vào _showFullScreenImage
-
-// --- Màn hình Chỉnh sửa Profile (ĐÃ HOÀN THIỆN) ---
+// --- Màn hình Chỉnh sửa Profile ---
 class EditProfileScreen extends StatefulWidget {
   final String currentUserId;
   final String initialName;
@@ -58,7 +58,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
 
-    // SỬA Ở ĐÂY
     final Map<String, dynamic> dataToUpdate = {
       'displayName': _nameController.text.trim(),
       'displayNameLower': _nameController.text.trim().toLowerCase(),
@@ -198,13 +197,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 }
 
-// --- Constants thực tế của dự án ---
-const Color topazColor = Color(0xFFF6C886);
-const Color sonicSilver = Color(0xFF747579);
-const Color darkSurface = Color(0xFF1E1E1E);
-const Color coralRed = Color(0xFFFD402C);
-const Color activeGreen = Color(0xFF32CD32);
-
 // =======================================================
 // WIDGET CHÍNH: ProfileScreen
 // =======================================================
@@ -246,11 +238,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_profileUserId.isNotEmpty) {
       _userStream = _firestore.collection('users').doc(_profileUserId).snapshots();
     }
-    // Stream này rất quan trọng để kiểm tra mối quan hệ từ phía người dùng hiện tại
     if (!_isMyProfile && _currentUser != null) {
       _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
     }
   }
+
+  // --- HÀM MỚI: MOCK UPLOAD ẢNH (Sử dụng ImagePicker) ---
+  Future<String?> _uploadImageMock(String type) async {
+    if (_currentUser == null) return null;
+
+    // 1. Chọn ảnh
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+
+    if (image != null) {
+      // 2. Mock URL và độ trễ upload
+      final String mockUrl = 'https://picsum.photos/seed/${DateTime.now().millisecondsSinceEpoch}/800/800';
+      await Future.delayed(const Duration(seconds: 2));
+
+      return mockUrl;
+    }
+    return null;
+  }
+  // --- END MOCK UPLOAD ---
+
 
   String _formatTimestampAgo(Timestamp timestamp) {
     final difference = DateTime.now().difference(timestamp.toDate());
@@ -269,6 +280,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e')));
+      }
+    }
+  }
+
+  // --- HÀM MỚI: CHẶN NGƯỜI DÙNG ---
+  void _blockUser(String targetUserId, String targetUserName) async {
+    if (_currentUser == null || targetUserId.isEmpty) return;
+    final currentUserId = _currentUser!.uid;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: darkSurface,
+          title: const Text('Chặn người dùng', style: TextStyle(color: Colors.white)),
+          content: Text('Bạn có chắc chắn muốn chặn $targetUserName không?', style: const TextStyle(color: sonicSilver)),
+          actions: [
+            TextButton(
+              child: const Text('Hủy', style: TextStyle(color: sonicSilver)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+            ),
+            TextButton(
+              child: const Text('Chặn', style: TextStyle(color: coralRed)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      try {
+        await _firestore.collection('users').doc(currentUserId).update({
+          'blockedUids': FieldValue.arrayUnion([targetUserId])
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã chặn $targetUserName.'), backgroundColor: coralRed));
+        if(mounted) Navigator.pop(context);
+      } catch (e) {
+        developer.log("Lỗi chặn người dùng: $e");
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể chặn người dùng.'), backgroundColor: coralRed));
       }
     }
   }
@@ -325,7 +376,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // --- HÀM MỚI: XỬ LÝ KẾT BẠN ---
   Future<void> _toggleFriendRequest(String currentStatus, String targetUserName) async {
     if (_currentUser == null || _isMyProfile) return;
 
@@ -336,9 +386,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final theirNotifications = theirUserRef.collection('notifications');
 
     try {
-      if (currentStatus == 'pending') { // Hủy lời mời
+      if (currentStatus == 'pending') {
         await myUserRef.update({'outgoingRequests': FieldValue.arrayRemove([theirId])});
-        // Also delete the notification on their end
         final notifQuery = await theirNotifications
             .where('type', isEqualTo: 'friend_request')
             .where('senderId', isEqualTo: myId)
@@ -347,8 +396,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         for (var doc in notifQuery.docs) {
           await doc.reference.delete();
         }
-      } else if (currentStatus == 'none') { // Gửi lời mời
-        // Get sender's info for the notification
+      } else if (currentStatus == 'none') {
         DocumentSnapshot myUserDoc = await myUserRef.get();
         String senderName = 'Người dùng';
         String? senderAvatarUrl;
@@ -376,12 +424,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildStatsBlock(int posts, int followers, int following) {
+    // Khoảng cách cố định giữa các mục (Điều chỉnh giá trị này để "xích vô" hoặc "xích ra")
+    final double innerSpacing = 24.0;
+
+    // Độ rộng đối xứng cố định cho hai mục bên (để đảm bảo tâm nằm đúng giữa)
+    // 90.0 là ước tính cho nhãn dài nhất ("Đang theo dõi").
+    final double sideItemWidth = 90.0;
+
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      // Căn giữa toàn bộ khối (đảm bảo khối này nằm giữa màn hình)
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _buildStatItem(posts, 'Bài viết'),
+        // 1. Bài viết (Buộc vào Khung Đối xứng)
+        SizedBox(
+          width: sideItemWidth,
+          child: _buildStatItem(posts, 'Bài viết'),
+        ),
+
+        // Khoảng cách cố định (Điều chỉnh để xích lại gần hơn)
+        SizedBox(width: innerSpacing),
+
+        // 2. Người theo dõi (Nằm ở giữa - không cần Khung Đối xứng)
         _buildStatItem(followers, 'Người theo dõi'),
-        _buildStatItem(following, 'Đang theo dõi'),
+
+        // Khoảng cách cố định (Điều chỉnh để xích lại gần hơn)
+        SizedBox(width: innerSpacing),
+
+        // 3. Đang theo dõi (Buộc vào Khung Đối xứng)
+        SizedBox(
+          width: sideItemWidth,
+          child: _buildStatItem(following, 'Đang theo dõi'),
+        ),
       ],
     );
   }
@@ -402,7 +475,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // --- (SỬA) HÀM BUILD CÁC NÚT BẤM ---
   Widget _buildActionButtons(BuildContext context, bool isAccountLocked, String name, String bio) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -410,12 +482,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         stream: _myUserDataStream,
         builder: (context, myDataSnapshot) {
           if (_isMyProfile || !myDataSnapshot.hasData || !myDataSnapshot.data!.exists) {
-            return const SizedBox.shrink(); // Không hiển thị nút nếu là profile của mình hoặc chưa có dữ liệu
+            return const SizedBox.shrink();
           }
 
           final myData = myDataSnapshot.data!.data() as Map<String, dynamic>? ?? {};
 
-          // Lấy tất cả trạng thái từ Stream
           final amIFollowing = (myData['following'] as List<dynamic>? ?? []).contains(_profileUserId);
           final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(_profileUserId);
           final isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(_profileUserId);
@@ -427,13 +498,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
             friendStatus = 'pending';
           }
 
-          // --- Logic nút Theo dõi ---
           final followButtonText = amIFollowing ? 'Đang theo dõi' : 'Theo dõi';
           final followButtonColor = amIFollowing ? darkSurface : Colors.blueAccent;
           final followTextColor = Colors.white;
           final followButtonSide = amIFollowing ? const BorderSide(color: sonicSilver) : BorderSide.none;
 
-          // --- Logic nút Kết bạn ---
           final friendButtonText = friendStatus == 'friend' ? 'Bạn bè' : (friendStatus == 'pending' ? 'Hủy lời mời' : 'Kết bạn');
           final friendButtonColor = friendStatus == 'friend' ? darkSurface : (friendStatus == 'pending' ? darkSurface : topazColor);
           final friendTextColor = friendStatus == 'friend' ? sonicSilver : (friendStatus == 'pending' ? sonicSilver : Colors.black);
@@ -441,7 +510,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           return Row(
             children: [
-              // Nút Theo dõi
               Expanded(
                 child: ElevatedButton(
                   onPressed: () => _toggleFollow(amIFollowing),
@@ -456,7 +524,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(width: 10),
 
-              // Nút Kết bạn (chỉ hiển thị nếu chưa là bạn)
               if (!isFriend)
                 Expanded(
                   child: ElevatedButton(
@@ -473,7 +540,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (!isFriend)
                 const SizedBox(width: 10),
 
-              // Nút Nhắn tin
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
@@ -493,7 +559,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
-  // --- Các hàm còn lại được giữ nguyên ---
 
   void _showFullScreenImage(String? imageUrl, {String? tag}) {
     if (imageUrl == null || imageUrl.isEmpty || !imageUrl.startsWith('http')) {
@@ -553,6 +618,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // --- CẬP NHẬT: XỬ LÝ CHỌN/TẢI ẢNH ĐẠI DIỆN ---
   void _handleAvatarTap(BuildContext context, String? avatarImageUrl) {
     final heroTag = 'userAvatar_$_profileUserId';
     if (!_isMyProfile) {
@@ -568,7 +634,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ListTile(
           leading: const Icon(Icons.camera_alt, color: Colors.white),
           title: const Text('Đổi ảnh đại diện', style: TextStyle(color: Colors.white)),
-          onTap: () { Navigator.pop(context); /* TODO: Pick/Upload logic */ }
+          onTap: () async {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đang tải ảnh lên...'), backgroundColor: sonicSilver));
+            final newUrl = await _uploadImageMock('avatar');
+            if (newUrl != null) {
+              _updateUserProfile({'photoURL': newUrl});
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã hủy hoặc lỗi tải ảnh lên.'), backgroundColor: coralRed));
+            }
+          }
       ),
       if (avatarImageUrl != null && avatarImageUrl.isNotEmpty)
         ListTile(
@@ -579,6 +654,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ]);
   }
 
+  // --- CẬP NHẬT: XỬ LÝ CHỌN/TẢI ẢNH BÌA ---
   void _handleCoverTap(BuildContext context, String? coverImageUrl) {
     final heroTag = 'userCover_$_profileUserId';
     if (!_isMyProfile) {
@@ -594,7 +670,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ListTile(
           leading: const Icon(Icons.camera_alt, color: Colors.white),
           title: const Text('Đổi ảnh bìa', style: TextStyle(color: Colors.white)),
-          onTap: () { Navigator.pop(context); /* TODO: Pick/Upload logic */ }
+          onTap: () async {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đang tải ảnh lên...'), backgroundColor: sonicSilver));
+            final newUrl = await _uploadImageMock('cover');
+            if (newUrl != null) {
+              _updateUserProfile({'coverImageUrl': newUrl});
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã hủy hoặc lỗi tải ảnh lên.'), backgroundColor: coralRed));
+            }
+          }
       ),
       if (coverImageUrl != null && coverImageUrl.isNotEmpty)
         ListTile(
@@ -630,15 +715,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // --- CẬP NHẬT: THỰC HIỆN CHẶN NGƯỜI DÙNG ---
   Widget _buildOtherProfileMenu(BuildContext context) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: Colors.white),
       color: darkSurface,
       itemBuilder: (BuildContext context) => [
         const PopupMenuItem<String>(value: 'report', child: Text('Báo cáo người dùng')),
-        const PopupMenuItem<String>(value: 'block', child: Text('Chặn người dùng')),
+        const PopupMenuItem<String>(value: 'block', child: Text('Chặn người dùng', style: TextStyle(color: coralRed))),
       ],
-      onSelected: (String value) { /* TODO: Xử lý logic report/block */ },
+      onSelected: (String value) async {
+        if (value == 'block') {
+          final userDoc = await _firestore.collection('users').doc(_profileUserId).get();
+          final targetName = (userDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng này';
+          _blockUser(_profileUserId, targetName);
+        } else if (value == 'report') {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chức năng báo cáo chưa được triển khai.'), backgroundColor: sonicSilver));
+        }
+      },
     );
   }
 
@@ -708,7 +802,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildGridItem(String postId, String? imagePathOrUrl, int likes) {
     final ImageProvider? imageProvider = (imagePathOrUrl != null && imagePathOrUrl.isNotEmpty && imagePathOrUrl.startsWith('http')) ? NetworkImage(imagePathOrUrl) : null;
     return GestureDetector(
-      onTap: () => _navigateToPostDetail(postId),
+      onTap: () => _navigateToPostDetail(postId), // SỬ DỤNG HÀM CẬP NHẬT
       child: Container(
           decoration: const BoxDecoration( color: darkSurface ),
           child: Stack(
@@ -722,8 +816,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // --- CẬP NHẬT: TRIỂN KHAI HÀM ĐIỀU HƯỚNG CHI TIẾT BÀI VIẾT ---
   Future<void> _navigateToPostDetail(String postId) async {
-    print("Navigating to Post Detail for: $postId");
+    try {
+      final postDoc = await _firestore.collection('posts').doc(postId).get();
+      if (postDoc.exists) {
+        Map<String, dynamic> postData = postDoc.data() as Map<String, dynamic>;
+        postData['id'] = postDoc.id;
+        if(mounted) {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (context) => PostDetailScreen(postData: postData),
+          ));
+        }
+      } else {
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bài viết không còn tồn tại.'), backgroundColor: coralRed));
+        }
+      }
+    } catch (e) {
+      developer.log("Lỗi điều hướng đến Post Detail: $e");
+    }
   }
 
   @override
@@ -739,6 +851,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final String displayedTitle = userData['title'] ?? userData['bio'] ?? '';
         final String displayedBio = userData['bio'] ?? userData['title'] ?? '';
         final bool isAccountLocked = userData['isPrivate'] ?? false;
+        final bool lockStats = userData['lockFollowerFollowing'] ?? false; // Lấy trường mới
         final String? avatarUrl = userData['photoURL'] as String?;
         final String? coverUrl = userData['coverImageUrl'] as String?;
         final List<String> followers = List<String>.from(userData['followers'] ?? []);
@@ -762,7 +875,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   context, displayedName, displayedTitle, displayedBio,
                   avatarUrl, avatarImageProvider,
                   postsCount, followers.length, following.length,
-                  isAccountLocked
+                  isAccountLocked,
+                  lockStats // TRUYỀN BIẾN MỚI
               ),
               _buildGalleryTabs(),
               Expanded(
@@ -803,14 +917,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // --- CẬP NHẬT: BỔ SUNG BIẾN lockStats VÀ LOGIC KIỂM TRA ---
   Widget _buildProfileHeaderContent(
       BuildContext context, String name, String title, String bio,
       String? avatarPathOrUrl, ImageProvider? avatarImageProvider,
       int postsCount, int followersCount, int followingCount,
-      bool isAccountLocked
+      bool isAccountLocked,
+      bool lockStats
       ) {
     final heroTag = 'userAvatar_$_profileUserId';
-    final bool hideSensitiveStats = !_isMyProfile && isAccountLocked;
+
+    // CẢI TIẾN LOGIC: Ẩn khi là người lạ VÀ (tài khoản bị khóa HOẶC thống kê bị khóa)
+    final bool hideSensitiveStats = !_isMyProfile && (isAccountLocked || lockStats);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
