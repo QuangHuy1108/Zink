@@ -202,6 +202,7 @@ class FollowersScreen extends StatelessWidget {
   final String profileName;
   final List<String> userIds;
   final String profileUserId;
+  final bool isLocked; // THÊM: Biến kiểm tra khóa
 
   const FollowersScreen({
     super.key,
@@ -209,6 +210,7 @@ class FollowersScreen extends StatelessWidget {
     required this.profileName,
     required this.userIds,
     required this.profileUserId,
+    required this.isLocked, // BỔ SUNG
   });
 
   @override
@@ -221,15 +223,40 @@ class FollowersScreen extends StatelessWidget {
         title: Text('$title của $profileName', style: const TextStyle(color: Colors.white)),
         backgroundColor: Colors.black,
       ),
-      body: userIds.isEmpty
+      body: isLocked
+          ? Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.lock, color: sonicSilver, size: 60),
+              const SizedBox(height: 16),
+              Text(
+                'Danh sách $title này đã bị khóa.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: sonicSilver, fontSize: 18),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Người dùng này đã chọn ẩn số lượng và danh sách $title.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: sonicSilver.withOpacity(0.6), fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      )
+          : userIds.isEmpty
           ? Center(child: Text('Chưa có $title nào.', style: const TextStyle(color: sonicSilver)))
           : ListView.builder(
         itemCount: userIds.length,
         itemBuilder: (context, index) {
-          // TODO: Trong bản thực tế, bạn cần fetch data từ Firestore dựa trên userIds[index]
+          final userId = userIds[index];
+          // TODO: Trong bản thực tế, bạn cần fetch user data chi tiết từ Firestore dựa trên userId
           return ListTile(
             leading: const CircleAvatar(backgroundColor: darkSurface, child: Icon(Icons.person, color: sonicSilver)),
-            title: Text('ID: ${userIds[index]}', style: const TextStyle(color: Colors.white)),
+            title: Text('ID: $userId', style: const TextStyle(color: Colors.white)),
             subtitle: Text('Đang hiển thị ID người dùng.', style: const TextStyle(color: sonicSilver)),
           );
         },
@@ -237,7 +264,27 @@ class FollowersScreen extends StatelessWidget {
     );
   }
 }
+// --- KẾT THÚC MÀN HÌNH MỚI ---
 
+// --- CẬP NHẬT: _buildStatItem để có thể nhấn được (Sử dụng 3 arguments) ---
+Widget _buildStatItem(int count, String label, VoidCallback onTap) {
+  return GestureDetector(
+    onTap: onTap,
+    child: Column(
+      children: [
+        Text(
+          count.toString(),
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(color: sonicSilver.withOpacity(0.8), fontSize: 14),
+        ),
+      ],
+    ),
+  );
+}
 // =======================================================
 // WIDGET CHÍNH: ProfileScreen
 // =======================================================
