@@ -279,20 +279,63 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
     // 1. Tăng share count trên bài post gốc
     await _incrementShares();
 
-    // 2. Lấy dữ liệu người gửi (là bạn) từ Firestore
-    DocumentSnapshot userDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
-    String senderName = 'Bạn';
-    if(userDoc.exists) {
-      final userData = userDoc.data() as Map<String, dynamic>;
-      senderName = userData['displayName'] ?? 'Bạn';
-    }
-
-    // 3. Gửi tin nhắn (Placeholder cho logic chat)
+    final user = _currentUser!;
+    final currentUserId = user.uid;
     final recipientCount = _selectedFriendUids.length;
-    print("Gửi bài viết ${widget.postId} tới $recipientCount bạn bè bởi $senderName.");
-    print("Tin nhắn kèm theo: $message");
 
-    // TODO: Triển khai logic tạo đoạn chat/tin nhắn thực tế cho từng người dùng.
+    DocumentSnapshot myUserDoc = await _firestore.collection('users').doc(currentUserId).get();
+    String senderName = (myUserDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Bạn';
+
+    // 2. Lặp qua từng người nhận và tạo/cập nhật chat
+    for (final recipientId in _selectedFriendUids) {
+      // 2a. Tìm hoặc tạo chat 1-1
+      List<String> participants = [currentUserId, recipientId]..sort();
+
+      QuerySnapshot chatQuery = await _firestore.collection('chats')
+          .where('participants', isEqualTo: participants)
+          .where('isGroup', isEqualTo: false)
+          .limit(1)
+          .get();
+
+      DocumentReference chatRef;
+      if (chatQuery.docs.isNotEmpty) {
+        chatRef = chatQuery.docs.first.reference;
+      } else {
+        // Tạo chat mới nếu chưa có
+        chatRef = await _firestore.collection('chats').add({
+          'participants': participants,
+          'lastMessage': '',
+          'lastMessageTimestamp': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'unreadCount': {currentUserId: 0, recipientId: 1}, // Tự động đánh dấu người nhận là chưa đọc
+          'isGroup': false,
+          'isPinned': false,
+        });
+      }
+
+      // 2b. Tạo tin nhắn Shared Post
+      final messageContent = {
+        'senderId': currentUserId,
+        'text': message, // Tin nhắn văn bản kèm theo
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'shared_post', // <<< LOẠI TIN NHẮN MỚI
+        'postId': widget.postId, // <<< ID BÀI VIẾT ĐƯỢC CHIA SẺ
+        'isRead': false,
+        'isRecalled': false,
+        'deletedFor': [],
+      };
+
+      await chatRef.collection('messages').add(messageContent);
+
+      // 2c. Cập nhật lastMessage và unreadCount
+      await chatRef.update({
+        'lastMessage': 'Đã chia sẻ bài viết',
+        'lastMessageTimestamp': FieldValue.serverTimestamp(),
+        'unreadCount.$recipientId': FieldValue.increment(1),
+        // Đặt unreadCount của người gửi về 0
+        'unreadCount.$currentUserId': 0,
+      });
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -302,6 +345,7 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       Navigator.pop(context);
     }
   }
+
   Widget _buildShareToFriendsSection() {
     final bool hasFriendsSelected = _selectedFriendUids.isNotEmpty;
 

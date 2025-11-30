@@ -322,6 +322,10 @@ class _FeedScreenState extends State<FeedScreen> {
 
   List<DocumentSnapshot> _suggestedFriends = [];
 
+  // BIẾN THAY ĐỔI ĐỂ KHẮC PHỤC LỖI QUYỀN RIÊNG TƯ
+  List<String> _followingList = []; // Danh sách UID những người tôi đang theo dõi (bao gồm UID của tôi)
+  bool _dataLoaded = false; // Cờ báo hiệu dữ liệu ban đầu đã tải xong
+
   final ScrollController _scrollController = ScrollController(); // DÒNG NÀY
 
   @override
@@ -333,7 +337,51 @@ class _FeedScreenState extends State<FeedScreen> {
       _myUserDataStream = _firestore.collection('users').doc(_currentUser!.uid).snapshots();
     }
     _fetchSuggestedFriends();
+    _fetchCurrentUserFollowing(); // KHỞI TẠO LOGIC TẢI DANH SÁCH
   }
+
+  // HÀM TẢI DANH SÁCH NGƯỜI ĐANG THEO DÕI
+  Future<void> _fetchCurrentUserFollowing() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    try {
+      final userData = await _firestore.collection('users').doc(user.uid).get();
+      if (userData.exists) {
+        _followingList = List<String>.from(userData['following'] ?? []);
+        // Quan trọng: Thêm UID của chính tôi để tôi cũng có thể xem bài viết 'Bạn bè' của mình
+        _followingList.add(user.uid);
+
+        if (mounted) {
+          setState(() {
+            _dataLoaded = true; // Báo hiệu đã tải xong
+          });
+        }
+      }
+    } catch (e) {
+      print("Error fetching following list: $e");
+    }
+  }
+
+  // HÀM BỔ SUNG: Cho phép xóa bài viết (Đã bị thiếu)
+  void _deletePost(String postId) async {
+    final user = _auth.currentUser;
+    if (user == null || postId.isEmpty) return;
+    try {
+      // Delete post
+      await _firestore.collection('posts').doc(postId).delete();
+      // Decrease postsCount (as fixed previously)
+      await _firestore.collection('users').doc(user.uid).update({'postsCount': FieldValue.increment(-1)});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.'), backgroundColor: coralRed));
+      }
+    } catch (e) {
+      print("Error deleting post from feed: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Không thể xóa bài viết.'), backgroundColor: coralRed));
+      }
+    }
+  }
+
 
   @override
   void dispose() { // KHỐI NÀY
@@ -344,6 +392,7 @@ class _FeedScreenState extends State<FeedScreen> {
   Future<void> _handleRefresh() async {
     // Tải lại cả gợi ý và bài viết
     await _fetchSuggestedFriends();
+    await _fetchCurrentUserFollowing(); // Tải lại danh sách theo dõi
   }
 
   void _scrollToTopAndRefresh() { // KHỐI NÀY
@@ -375,10 +424,21 @@ class _FeedScreenState extends State<FeedScreen> {
       final myOutgoingRequests = List<String>.from(currentUserData['outgoingRequests'] ?? []);
       final myFollowing = List<String>.from(currentUserData['following'] ?? []);
 
+      // BỔ SUNG: Lấy UIDs của người đã gửi lời mời đến tôi (để loại trừ khỏi gợi ý)
+      final incomingRequestsSnapshot = await _firestore.collection('users')
+          .doc(_currentUser!.uid).collection('notifications')
+          .where('type', isEqualTo: 'friend_request')
+          .where('actionTaken', isEqualTo: false)
+          .get();
+
+      final incomingRequestUids = incomingRequestsSnapshot.docs.map((doc) => doc['senderId'] as String).toList();
+
+
       // 2. Tạo một danh sách các ID cần loại trừ.
       final excludeUids = {
         _currentUser!.uid, // Loại trừ chính mình
         ...myFriends,           // Loại trừ bạn bè
+        ...incomingRequestUids, // <<< KHẮC PHỤC LỖI: Loại trừ người đã gửi lời mời đến tôi
       };
 
       // 3. Lấy người dùng về để lọc. Tăng giới hạn để có nhiều lựa chọn hơn.
@@ -388,12 +448,12 @@ class _FeedScreenState extends State<FeedScreen> {
       final suggestions = usersSnapshot.docs.where((doc) {
         final docId = doc.id;
 
-        // 1. Lọc cơ bản: Bỏ qua nếu là bạn hoặc là chính mình
+        // 1. Lọc cơ bản: Bỏ qua nếu là bạn, là chính mình, HOẶC đã có lời mời đến (được thêm vào excludeUids)
         if (excludeUids.contains(docId)) {
           return false;
         }
 
-        // 2. Lọc theo yêu cầu mới: Bỏ qua CHỈ KHI đã gửi lời mời VÀ đang theo dõi
+        // 2. Lọc theo yêu cầu cũ (Giữ nguyên logic này cho việc theo dõi/gửi lời mời đi)
         final bool hasSentRequest = myOutgoingRequests.contains(docId);
         final bool isFollowing = myFollowing.contains(docId);
 
@@ -401,7 +461,7 @@ class _FeedScreenState extends State<FeedScreen> {
           return false; // Đã làm cả hai -> Lọc bỏ
         }
 
-        // 3. Giữ lại trong các trường hợp khác (chưa làm gì, chỉ follow, hoặc chỉ kết bạn)
+        // 3. Giữ lại trong các trường hợp khác
         return true;
       }).toList();
 
@@ -417,20 +477,38 @@ class _FeedScreenState extends State<FeedScreen> {
       print("Lỗi khi lấy danh sách gợi ý kết bạn: $e");
     }
   }
-
+  // HÀM XÂY DỰNG SLIVER FEED MỚI (ĐÃ THÊM LOGIC LỌC QUYỀN RIÊNG TƯ)
   Widget _buildPostFeedSliver() {
-    Query query = _firestore.collection('posts').orderBy('timestamp', descending: true);
+    // 1. Kiểm tra trạng thái tải dữ liệu
+    if (!_dataLoaded) { // Check if user following list is loaded
+      return const SliverFillRemaining(
+        child: Center(child: Padding(
+          padding: EdgeInsets.only(top: 100.0),
+          child: CircularProgressIndicator(color: topazColor),
+        )),
+        hasScrollBody: false,
+      );
+    }
+
+    // 2. Truy vấn Firebase: Lấy tất cả bài viết 'Công khai' và 'Bạn bè'
+    Query query = _firestore.collection('posts')
+    // whereIn để lấy cả 'Công khai' và 'Bạn bè'
+        .where('privacy', whereIn: ['Công khai', 'Bạn bè'])
+        .orderBy('timestamp', descending: true);
+
     const int suggestionInsertionIndex = 3;
 
     return StreamBuilder<QuerySnapshot>(
-      stream: query.limit(20).snapshots(),
+      stream: query.limit(20).snapshots(), // Giới hạn 20 bài viết
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && _suggestedFriends.isEmpty) {
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const SliverFillRemaining(
             child: Center(child: CircularProgressIndicator(color: topazColor)),
             hasScrollBody: false,
           );
         }
+
         if (snapshot.hasError) {
           return SliverFillRemaining(
             child: Center(child: Text('Lỗi tải bài viết: ${snapshot.error}', style: const TextStyle(color: coralRed))),
@@ -438,19 +516,41 @@ class _FeedScreenState extends State<FeedScreen> {
           );
         }
 
-        final posts = snapshot.data?.docs ?? [];
+        final List<DocumentSnapshot> allPosts = snapshot.data?.docs ?? [];
+
+        // 3. LỌC BÀI VIẾT DỰA TRÊN QUYỀN RIÊNG TƯ (Local Filter)
+        final List<DocumentSnapshot> filteredPosts = allPosts.where((doc) {
+          final String privacy = doc['privacy'] ?? 'Công khai';
+          final String postAuthorId = doc['uid'];
+
+          // A. Luôn hiển thị bài viết 'Công khai'
+          if (privacy == 'Công khai') {
+            return true;
+          }
+
+          // B. Chỉ hiển thị bài viết 'Bạn bè' nếu tôi đang theo dõi tác giả
+          if (privacy == 'Bạn bè') {
+            return _followingList.contains(postAuthorId);
+          }
+
+          return false;
+        }).toList();
+
+        final posts = filteredPosts;
+
         if (posts.isEmpty && _suggestedFriends.isEmpty) {
           return const SliverFillRemaining(
             child: Center(
                 child: Padding(
                     padding: EdgeInsets.all(20),
-                    child: Text('Chưa có bài viết nào.', style: TextStyle(color: sonicSilver)))),
+                    child: Text('Chưa có bài viết nào hiển thị cho bạn.', style: TextStyle(color: sonicSilver)))),
             hasScrollBody: false,
           );
         }
 
         List<dynamic> combinedList = List.from(posts);
 
+        // Re-insert Suggested Friends logic
         if (_suggestedFriends.isNotEmpty && posts.length >= suggestionInsertionIndex) {
           combinedList.insert(suggestionInsertionIndex, _suggestedFriends);
         } else if (_suggestedFriends.isNotEmpty) {
@@ -466,7 +566,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 return SuggestedFriendsSection(
                   suggestedFriends: item,
                   myUserDataStream: _myUserDataStream,
-                  onActionTaken: _fetchSuggestedFriends, // <-- TRUYỀN CALLBACK
+                  onActionTaken: _fetchSuggestedFriends,
                 );
               }
 
@@ -485,7 +585,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 padding: padding,
                 child: PostCard(
                   key: ValueKey(postData['id']),
-                  postData: postData,
+                  postData: postData, // ĐÃ SỬA LẠI ĐÚNG THAM SỐ
                 ),
               );
             },

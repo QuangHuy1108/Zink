@@ -362,7 +362,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderName = data['senderName'] as String? ?? 'Người dùng';
     final type = data['type'] as String?;
 
-    if (recipientId == null || senderId == null || type != 'friend_request' || (data['actionTaken'] as bool? ?? false)) {
+    if (recipientId == null || senderId == null || (data['actionTaken'] as bool? ?? false) && type == 'friend_request') {
       return;
     }
 
@@ -371,39 +371,69 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final senderRef = _firestore.collection('users').doc(senderId);
     final notifRef = notifDoc.reference;
 
-    batch.update(notifRef, {'actionTaken': true});
-
     String message;
 
-    if (action == 'accept') {
-      final recipientDoc = await recipientRef.get();
-      final recipientData = recipientDoc.data() as Map<String, dynamic>?;
-      final recipientName = recipientData?['displayName'] ?? 'Người dùng';
-      final recipientAvatarUrl = recipientData?['photoURL'];
+    if (type == 'friend_request') {
 
-      batch.update(recipientRef, {'friendUids': FieldValue.arrayUnion([senderId])});
-      batch.update(senderRef, {'friendUids': FieldValue.arrayUnion([recipientId])});
-      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+      batch.update(notifRef, {'actionTaken': true});
 
-      batch.set(
-          _firestore.collection('users').doc(senderId).collection('notifications').doc(),
-          {
-            'type': 'friend_accept',
-            'senderId': recipientId,
-            'senderName': recipientName,
-            'senderAvatarUrl': recipientAvatarUrl,
-            'destinationId': recipientId,
-            'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
-            'timestamp': FieldValue.serverTimestamp(),
-            'isRead': false,
-          }
-      );
-      message = 'Đã chấp nhận lời mời kết bạn từ $senderName.';
+      if (action == 'accept') {
+        final recipientDoc = await recipientRef.get();
+        final recipientData = recipientDoc.data() as Map<String, dynamic>?;
+        final recipientName = recipientData?['displayName'] ?? 'Người dùng';
+        final recipientAvatarUrl = recipientData?['photoURL'];
 
-    } else if (action == 'reject') {
-      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
-      batch.delete(notifRef);
-      message = 'Đã từ chối lời mời kết bạn từ $senderName.';
+        batch.update(recipientRef, {'friendUids': FieldValue.arrayUnion([senderId])});
+        batch.update(senderRef, {'friendUids': FieldValue.arrayUnion([recipientId])});
+        batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+
+        batch.set(
+            _firestore.collection('users').doc(senderId).collection('notifications').doc(),
+            {
+              'type': 'friend_accept',
+              'senderId': recipientId,
+              'senderName': recipientName,
+              'senderAvatarUrl': recipientAvatarUrl,
+              'destinationId': recipientId,
+              'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
+              'timestamp': FieldValue.serverTimestamp(),
+              'isRead': false,
+            }
+        );
+        message = 'Đã chấp nhận lời mời kết bạn từ $senderName.';
+
+      } else if (action == 'reject') {
+        batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+        batch.delete(notifRef);
+        message = 'Đã từ chối lời mời kết bạn từ $senderName.';
+      } else {
+        return;
+      }
+
+    } else if (type == 'follow') {
+
+      if (action == 'follow_back') {
+        // Theo dõi lại: Cập nhật 2 mảng following/followers
+        batch.update(recipientRef, {'following': FieldValue.arrayUnion([senderId])});
+        batch.update(senderRef, {'followers': FieldValue.arrayUnion([recipientId])});
+
+        // Đánh dấu thông báo đã xử lý
+        batch.update(notifRef, {'actionTaken': true});
+
+        message = 'Đã theo dõi lại $senderName.';
+
+      } else if (action == 'unfollow_back') {
+        // Bỏ theo dõi lại: Cập nhật 2 mảng following/followers
+        batch.update(recipientRef, {'following': FieldValue.arrayRemove([senderId])});
+        batch.update(senderRef, {'followers': FieldValue.arrayRemove([recipientId])});
+
+        // Đánh dấu thông báo chưa xử lý (cho phép theo dõi lại)
+        batch.update(notifRef, {'actionTaken': false});
+
+        message = 'Đã bỏ theo dõi lại $senderName.';
+      } else {
+        return;
+      }
     } else {
       return;
     }
@@ -412,12 +442,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
       await batch.commit();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: topazColor));
-        if (action == 'accept') {
+        if (action == 'accept' || action == 'follow_back') {
           _markSingleNotificationAsRead(notifDoc);
         }
       }
     } catch (e) {
-      print("Lỗi xử lý yêu cầu kết bạn: $e");
+      print("Lỗi xử lý hành động xã hội: $e");
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Xử lý yêu cầu không thành công.'), backgroundColor: coralRed));
     }
   }

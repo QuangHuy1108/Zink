@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 
 import 'create_group_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
 import 'profile_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen, PostDetailScreen, Comment, PlaceholderScreen, FeedScreen, FollowersScreen, MessageScreen;
+import 'post_detail_screen.dart'; // <<< KHẮC PHỤC LỖI: IMPORT ĐỂ SỬ DỤNG PostDetailScreen
 
 const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
@@ -1033,6 +1034,7 @@ class _ConversationViewState extends State<_ConversationView> {
                     replyTo: replyTo,
                     isRecalled: isRecalled,
                     isPinned: _pinnedMessageId == messageId,
+                    data: data, // <<< KHẮC PHỤC LỖI: TRUYỀN TOÀN BỘ DATA
                   );
 
                   // ... (logic date header)
@@ -1171,6 +1173,7 @@ class _MessageBubble extends StatelessWidget {
   final bool isRead;
   final bool isGroup;
   final Function(String senderId) onAvatarTap;
+  final Map<String, dynamic> data; // <<< KHẮC PHỤC LỖI: TRƯỜNG DỮ LIỆU ĐƯỢC THÊM
 
   final Function(Map<String, dynamic> messageData) onLongPress;
   final Map<String, dynamic>? replyTo;
@@ -1186,11 +1189,11 @@ class _MessageBubble extends StatelessWidget {
     this.isRead = false,
     required this.isGroup,
     required this.onAvatarTap,
-
     required this.onLongPress,
     this.replyTo,
     required this.isRecalled,
     required this.isPinned,
+    required this.data, // <<< KHẮC PHỤC LỖI: TRUYỀN DỮ LIỆU VÀO
   });
 
   @override
@@ -1222,6 +1225,10 @@ class _MessageBubble extends StatelessWidget {
   // Hàm helper để xây dựng layout bong bóng
   Widget _buildBubbleLayout(BuildContext context, String timeString, ImageProvider? avatarProvider, bool isMe, bool isRead, String text) {
 
+    // KHẮC PHỤC LỖI: Sử dụng this.data
+    final bool isSharedPost = this.data['type'] == 'shared_post' && this.data['postId'] != null;
+    final String? sharedPostId = isSharedPost ? this.data['postId'] as String : null;
+
     final String displayText = isRecalled ? '🚫 Tin nhắn đã được thu hồi' : text;
     final Color bubbleColor = isMe ? topazColor : darkSurface;
     final Color textColor = isMe ? Colors.black : Colors.white;
@@ -1245,7 +1252,11 @@ class _MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Hiển thị context trả lời
+            // HIỂN THỊ POST ĐƯỢC CHIA SẺ
+            if (isSharedPost && sharedPostId != null)
+              _buildSharedPostCard(context, sharedPostId), // <<< WIDGET MỚI
+
+            // ... (Phần hiển thị Reply Context và Icon Ghim giữ nguyên)
             if (replyTo != null)
               Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -1283,16 +1294,21 @@ class _MessageBubble extends StatelessWidget {
                 ),
               ),
 
-            // Nội dung tin nhắn
-            Text(
-              displayText,
-              style: TextStyle(
-                color: isRecalled ? sonicSilver : textColor,
-                fontSize: 15,
-                fontStyle: isRecalled ? FontStyle.italic : FontStyle.normal,
+            // Nội dung tin nhắn văn bản
+            if (!isSharedPost || text.isNotEmpty)
+              Padding(
+                padding: isSharedPost ? const EdgeInsets.only(top: 8.0) : EdgeInsets.zero,
+                child: Text(
+                  displayText,
+                  style: TextStyle(
+                    color: isRecalled ? sonicSilver : textColor,
+                    fontSize: 15,
+                    fontStyle: isRecalled ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
               ),
-            ),
 
+            // ... (Phần hiển thị Timestamp và Read Status giữ nguyên)
             const SizedBox(height: 4),
             Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1358,6 +1374,78 @@ class _MessageBubble extends StatelessWidget {
           if (isMe) const SizedBox(width: 40),
         ],
       ),
+    );
+  }
+
+  // KHẮC PHỤC LỖI: THÊM WIDGET _buildSharedPostCard VÀO ĐÂY
+  Widget _buildSharedPostCard(BuildContext context, String postId) {
+    // 1. Truy vấn Post Data
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('posts').doc(postId).get(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: topazColor)));
+        }
+
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: coralRed.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+            child: const Text('Bài viết đã bị xóa hoặc không còn tồn tại.', style: TextStyle(color: coralRed, fontSize: 13)),
+          );
+        }
+
+        final postData = snapshot.data!.data() as Map<String, dynamic>;
+        final String authorName = postData['displayName'] ?? 'Người dùng';
+        final String caption = postData['postCaption'] ?? 'Không có chú thích.';
+        final String? imageUrl = postData['imageUrl'] as String?;
+        final ImageProvider? imageProvider = (imageUrl != null && imageUrl.isNotEmpty) ? NetworkImage(imageUrl) : null;
+
+        // 2. Hiển thị Post Card mini
+        return GestureDetector(
+          onTap: () {
+            // Điều hướng đến chi tiết bài viết khi nhấn vào
+            Navigator.of(context).push(MaterialPageRoute(
+              builder: (ctx) => PostDetailScreen(postData: {...postData, 'id': postId}), // <<< KHẮC PHỤC LỖI CLASS
+            ));
+          },
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: sonicSilver.withOpacity(0.3))
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.person, color: sonicSilver, size: 16),
+                    const SizedBox(width: 4),
+                    Text(authorName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                // Hiển thị ảnh (nếu có)
+                if (imageProvider != null)
+                  Container(
+                    height: 100,
+                    margin: const EdgeInsets.only(top: 4, bottom: 4),
+                    decoration: BoxDecoration(
+                        image: DecorationImage(image: imageProvider, fit: BoxFit.cover),
+                        borderRadius: BorderRadius.circular(6)
+                    ),
+                  ),
+                // Hiển thị caption (preview)
+                Text(caption, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: sonicSilver, fontSize: 12)),
+                const SizedBox(height: 4),
+                const Text('Xem bài viết >', style: TextStyle(color: topazColor, fontWeight: FontWeight.bold, fontSize: 12)),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -464,7 +464,10 @@ class _ReelsScreenState extends State<ReelsScreen> {
         children: [
           // 1. PAGEVIEW CHỨA CÁC REEL (StreamBuilder giữ nguyên)
           StreamBuilder<QuerySnapshot>(
-            stream: _firestore.collection('reels').orderBy('timestamp', descending: true).limit(20).snapshots(),
+            // KHẮC PHỤC LỖI BẢO MẬT: Chỉ tải Reels CÔNG KHAI.
+            stream: _firestore.collection('reels')
+                .where('privacy', isEqualTo: 'Công khai') // <<< CHỈ LẤY CÔNG KHAI (SAFE)
+                .orderBy('timestamp', descending: true).limit(20).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator(color: topazColor));

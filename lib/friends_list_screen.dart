@@ -1,4 +1,4 @@
-// lib/friends_list_screen.dart
+// lib/friends_list_screen.dart (Thay thế toàn bộ nội dung file)
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,9 +11,10 @@ const Color topazColor = Color(0xFFF6C886);
 const Color sonicSilver = Color(0xFF747579);
 const Color darkSurface = Color(0xFF1E1E1E);
 const Color coralRed = Color(0xFFFD402C);
+const Color activeGreen = Color(0xFF32CD32); // BỔ SUNG CONSTANT
 
 // =======================================================
-// WIDGET CUSTOM: SLIDABLE LIST ITEM
+// WIDGET CUSTOM: SLIDABLE LIST ITEM (Giữ nguyên)
 // =======================================================
 class SlidableListItem extends StatefulWidget {
   final Key itemKey;
@@ -25,7 +26,7 @@ class SlidableListItem extends StatefulWidget {
   final VoidCallback onChildTap;
 
   const SlidableListItem({
-    required Key key, // Giữ lại key này
+    required Key key,
     required this.itemKey,
     required this.actionsWidth,
     required this.actions,
@@ -33,7 +34,7 @@ class SlidableListItem extends StatefulWidget {
     required this.onOpen,
     required this.onCloseRequest,
     required this.onChildTap,
-  }) : super(key: key); // Truyền key vào super constructor
+  }) : super(key: key);
 
   @override
   State<SlidableListItem> createState() => _SlidableListItemState();
@@ -49,7 +50,6 @@ class _SlidableListItemState extends State<SlidableListItem> with SingleTickerPr
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      // SỬA LỖI 1: Thêm duration
       duration: const Duration(milliseconds: 300),
     );
     _animation = Tween<Offset>(
@@ -119,6 +119,164 @@ class _SlidableListItemState extends State<SlidableListItem> with SingleTickerPr
     );
   }
 }
+
+// =======================================================
+// NEW WIDGET: FRIEND REQUESTS SECTION
+// =======================================================
+class _FriendRequestsSection extends StatelessWidget {
+  final User currentUser;
+  final Future<void> Function(DocumentSnapshot notifDoc, String action) onActionTap;
+
+  const _FriendRequestsSection({
+    required this.currentUser,
+    required this.onActionTap,
+  });
+
+  // Helper Card for horizontal display
+  Widget _buildRequestCard(String senderId, DocumentSnapshot notifDoc, BuildContext context) {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('users').doc(senderId).get(),
+      builder: (context, userSnapshot) {
+        if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+          return const SizedBox.shrink(); // Hide if user data is missing
+        }
+
+        final userData = userSnapshot.data!.data() as Map<String, dynamic>;
+        final String name = userData['displayName'] ?? 'Người dùng';
+        final String username = userData['username'] ?? '';
+        final String? avatarUrl = userData['photoURL'] as String?;
+        final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null;
+
+        final data = notifDoc.data() as Map<String, dynamic>? ?? {};
+        final bool actionTaken = data['actionTaken'] as bool? ?? false;
+
+        // Define button styles based on status
+        final acceptButtonText = actionTaken ? 'Đã chấp nhận' : 'Chấp nhận';
+        final acceptButtonColor = actionTaken ? darkSurface : topazColor;
+        final acceptTextColor = actionTaken ? sonicSilver : Colors.black;
+        final acceptSide = actionTaken ? const BorderSide(color: sonicSilver) : BorderSide.none;
+
+        return GestureDetector(
+          onTap: () {
+            // Navigate to profile of the sender
+            Navigator.of(context).push(MaterialPageRoute(builder: (context) => ProfileScreen(
+                targetUserId: senderId,
+                onNavigateToHome: () => Navigator.pop(context),
+                onLogout: () {}
+            )));
+          },
+          child: Container(
+            width: 150, // Fixed width for horizontal card
+            padding: const EdgeInsets.all(12.0),
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+                color: darkSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10, width: 0.5)
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundImage: avatarImage,
+                  backgroundColor: sonicSilver,
+                  child: avatarImage == null ? const Icon(Icons.person, color: Colors.white, size: 30) : null,
+                ),
+                const SizedBox(height: 8),
+                Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                Text('@$username', style: TextStyle(color: sonicSilver, fontSize: 12), overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 32,
+                  child: ElevatedButton(
+                    onPressed: actionTaken ? null : () => onActionTap(notifDoc, 'accept'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: acceptButtonColor, foregroundColor: acceptTextColor,
+                      side: acceptSide, padding: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      disabledBackgroundColor: darkSurface,
+                    ),
+                    child: Text(acceptButtonText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                if (!actionTaken)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6.0),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 32,
+                      child: OutlinedButton(
+                        onPressed: () => onActionTap(notifDoc, 'reject'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: sonicSilver, side: const BorderSide(color: sonicSilver),
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        child: const Text('Từ chối', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('users').doc(currentUser.uid).collection('notifications')
+          .where('type', isEqualTo: 'friend_request')
+          .where('actionTaken', isEqualTo: false) // Only show unhandled requests
+          .orderBy('timestamp', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator(color: topazColor, strokeWidth: 2)));
+        }
+
+        final requestDocs = snapshot.data?.docs ?? [];
+        if (requestDocs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Lời mời kết bạn (${requestDocs.length})',
+                style: const TextStyle(color: topazColor, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            SizedBox(
+              height: 250, // Fixed height for horizontal card display
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal, // Horizontal scroll
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                itemCount: requestDocs.length,
+                itemBuilder: (context, index) {
+                  final notifDoc = requestDocs[index];
+                  final senderId = notifDoc['senderId'] as String? ?? '';
+                  if (senderId.isEmpty) return const SizedBox.shrink();
+
+                  return _buildRequestCard(senderId, notifDoc, context);
+                },
+              ),
+            ),
+            const Divider(color: darkSurface, thickness: 1, height: 1),
+          ],
+        );
+      },
+    );
+  }
+}
+
 
 // =======================================================
 // MÀN HÌNH CHÍNH: FRIENDS LIST SCREEN
@@ -467,6 +625,80 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     }
   }
 
+  // NEW: Action handler for friend requests from the section
+  Future<void> _handleFriendRequestAction(DocumentSnapshot notifDoc, String action) async {
+    final currentUser = _auth.currentUser;
+    final recipientId = currentUser?.uid;
+
+    final data = notifDoc.data() as Map<String, dynamic>? ?? {};
+    final senderId = data['senderId'] as String?;
+    final senderName = data['senderName'] as String? ?? 'Người dùng';
+
+    if (recipientId == null || senderId == null) return;
+
+    final batch = _firestore.batch();
+    final recipientRef = _firestore.collection('users').doc(recipientId);
+    final senderRef = _firestore.collection('users').doc(senderId);
+    final notifRef = notifDoc.reference;
+
+    String message;
+
+    if (action == 'accept') {
+      final recipientDoc = await recipientRef.get();
+      final recipientData = recipientDoc.data() as Map<String, dynamic>?;
+      final recipientName = recipientData?['displayName'] ?? 'Người dùng';
+      final recipientAvatarUrl = recipientData?['photoURL'];
+
+      // 1. Update friendUids for both
+      batch.update(recipientRef, {'friendUids': FieldValue.arrayUnion([senderId])});
+      batch.update(senderRef, {'friendUids': FieldValue.arrayUnion([recipientId])});
+
+      // 2. Remove outgoing request from sender
+      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+
+      // 3. Update notification state (actionTaken)
+      batch.update(notifRef, {'actionTaken': true});
+
+      // 4. Send acceptance notification back
+      batch.set(
+          _firestore.collection('users').doc(senderId).collection('notifications').doc(),
+          {
+            'type': 'friend_accept',
+            'senderId': recipientId,
+            'senderName': recipientName,
+            'senderAvatarUrl': recipientAvatarUrl,
+            'destinationId': recipientId,
+            'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
+            'timestamp': FieldValue.serverTimestamp(),
+            'isRead': false,
+          }
+      );
+      message = 'Đã chấp nhận lời mời kết bạn.';
+
+    } else if (action == 'reject') {
+      // 1. Remove outgoing request from sender
+      batch.update(senderRef, {'outgoingRequests': FieldValue.arrayRemove([recipientId])});
+
+      // 2. Delete the incoming notification
+      batch.delete(notifRef);
+
+      message = 'Đã từ chối lời mời kết bạn.';
+    } else {
+      return;
+    }
+
+    try {
+      await batch.commit();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: topazColor));
+      }
+    } catch (e) {
+      print("Lỗi xử lý yêu cầu kết bạn từ FriendsList: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Xử lý yêu cầu không thành công.'), backgroundColor: coralRed));
+    }
+  }
+
+
   Widget _buildSearchField() {
     return Container(
       height: _searchBarHeight,
@@ -694,59 +926,90 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
     );
   }
 
-  Widget _buildFriendsList() {
-    final currentUserId = _currentUser?.uid;
-    if (currentUserId == null) return const Center(child: Text('Vui lòng đăng nhập', style: TextStyle(color: sonicSilver)));
+  // NEW: Function to build the requests and friends list combined
+  Widget _buildRequestsAndFriendsList(double dynamicPaddingTop) {
+    if (_currentUser == null) return const Center(child: Text('Vui lòng đăng nhập', style: TextStyle(color: sonicSilver)));
 
     return StreamBuilder<DocumentSnapshot>(
-      stream: _firestore.collection('users').doc(currentUserId).snapshots(),
+      stream: _firestore.collection('users').doc(_currentUser!.uid).snapshots(),
       builder: (context, userSnapshot) {
         if (userSnapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: topazColor));
-        if (userSnapshot.hasError || !userSnapshot.hasData || !userSnapshot.data!.exists) return const Center(child: Text('Lỗi tải danh sách bạn bè.', style: TextStyle(color: coralRed)));
+        if (userSnapshot.hasError || !userSnapshot.hasData || !userSnapshot.data!.exists) return const Center(child: Text('Lỗi tải dữ liệu.', style: TextStyle(color: coralRed)));
 
         final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
         final List<String> friendUids = List<String>.from(userData?['friendUids'] ?? []);
 
+        Widget friendsListWidget;
+
         if (friendUids.isEmpty) {
-          return Center(child: Padding(padding: const EdgeInsets.all(20.0), child: Text("Bạn chưa có người bạn nào.", style: TextStyle(color: sonicSilver, fontSize: 16))));
+          friendsListWidget = const Center(child: Padding(padding: EdgeInsets.all(20.0), child: Text("Bạn chưa có người bạn nào.", style: TextStyle(color: sonicSilver, fontSize: 16))));
+        } else {
+          final queryUids = friendUids.length > 30 ? friendUids.sublist(0, 30) : friendUids;
+
+          friendsListWidget = StreamBuilder<QuerySnapshot>(
+            stream: queryUids.isEmpty ? Stream.empty() : _firestore.collection('users').where(FieldPath.documentId, whereIn: queryUids).snapshots(),
+            builder: (context, friendsSnapshot) {
+              if (friendsSnapshot.connectionState == ConnectionState.waiting && !(friendsSnapshot.hasData || friendsSnapshot.hasError)) return const Center(child: Padding(padding: EdgeInsets.all(30.0), child: CircularProgressIndicator(color: topazColor, strokeWidth: 2)));
+              if (friendsSnapshot.hasError) return const Center(child: Text('Lỗi tải thông tin bạn bè.', style: TextStyle(color: coralRed)));
+
+              final friendDocs = friendsSnapshot.data?.docs ?? [];
+              if (friendDocs.isEmpty && queryUids.isNotEmpty) return const Center(child: Text('Không tìm thấy thông tin bạn bè.', style: TextStyle(color: sonicSilver)));
+
+              friendDocs.sort((a, b) {
+                final nameA = (a.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
+                final nameB = (b.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
+                return nameA.compareTo(nameB);
+              });
+
+              return ListView.separated(
+                key: const ValueKey('friendsList'),
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: friendDocs.length,
+                itemBuilder: (context, index) {
+                  final friendDoc = friendDocs[index];
+                  final friendData = friendDoc.data() as Map<String, dynamic>;
+                  friendData['uid'] = friendDoc.id;
+                  return _buildFriendItem(friendData);
+                },
+                separatorBuilder: (context, index) => const Divider( color: darkSurface, height: 1, thickness: 1, indent: 80, ),
+              );
+            },
+          );
         }
 
-        final queryUids = friendUids.length > 30 ? friendUids.sublist(0, 30) : friendUids;
-        if (friendUids.length > 30) print("Warning: Friend list query limited to 30.");
+        return SingleChildScrollView(
+          padding: EdgeInsets.only(top: dynamicPaddingTop, bottom: 30),
+          physics: const ClampingScrollPhysics(), // Use ClampingScrollPhysics for better integration with Stack/CustomScrollView
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. FRIEND REQUESTS SECTION
+              _FriendRequestsSection(
+                currentUser: _currentUser!,
+                onActionTap: _handleFriendRequestAction,
+              ),
 
-        return StreamBuilder<QuerySnapshot>(
-          stream: queryUids.isEmpty ? Stream.empty() : _firestore.collection('users').where(FieldPath.documentId, whereIn: queryUids).snapshots(),
-          builder: (context, friendsSnapshot) {
-            if (friendsSnapshot.connectionState == ConnectionState.waiting && !(friendsSnapshot.hasData || friendsSnapshot.hasError)) return const Center(child: Padding(padding: EdgeInsets.all(30.0), child: CircularProgressIndicator(color: topazColor, strokeWidth: 2)));
-            if (friendsSnapshot.hasError) return const Center(child: Text('Lỗi tải thông tin bạn bè.', style: TextStyle(color: coralRed)));
+              // 2. FRIENDS LIST TITLE (Only show if there are friends)
+              if (friendUids.isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Danh sách bạn bè',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
 
-            final friendDocs = friendsSnapshot.data?.docs ?? [];
-            if (friendDocs.isEmpty && queryUids.isNotEmpty) return const Center(child: Text('Không tìm thấy thông tin bạn bè.', style: TextStyle(color: sonicSilver)));
-
-            friendDocs.sort((a, b) {
-              final nameA = (a.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
-              final nameB = (b.data() as Map<String, dynamic>)['displayName'] as String? ?? '';
-              return nameA.compareTo(nameB);
-            });
-
-            final double dynamicPaddingTop = MediaQuery.of(context).padding.top + _fixedHeaderHeight + (_isSearchFieldVisible ? _searchBarHeight : 0);
-            return ListView.separated(
-              key: const ValueKey('friendsList'),
-              padding: EdgeInsets.only(top: dynamicPaddingTop, bottom: 30),
-              itemCount: friendDocs.length,
-              itemBuilder: (context, index) {
-                final friendDoc = friendDocs[index];
-                final friendData = friendDoc.data() as Map<String, dynamic>;
-                friendData['uid'] = friendDoc.id;
-                return _buildFriendItem(friendData);
-              },
-              separatorBuilder: (context, index) => const Divider( color: darkSurface, height: 1, thickness: 1, indent: 80, ),
-            );
-          },
+              // 3. FRIENDS LIST CONTENT
+              friendsListWidget,
+            ],
+          ),
         );
       },
     );
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -790,7 +1053,7 @@ class _FriendsListScreenState extends State<FriendsListScreen> {
                 separatorBuilder: (context, index) => const Divider(color: darkSurface, height: 1, thickness: 1, indent: 80),
               )
               )
-                  : _buildFriendsList(),
+                  : _buildRequestsAndFriendsList(searchListPaddingTop), // USE COMBINED WIDGET
             ),
             Positioned( top: 0, left: 0, right: 0, child: _buildFixedHeader(context) ),
             Positioned(

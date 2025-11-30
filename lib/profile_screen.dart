@@ -1,4 +1,4 @@
-// lib/profile_screen.dart
+// lib/profile_screen.dart (Thay thế toàn bộ nội dung file)
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,6 +12,9 @@ import 'dart:developer' as developer;
 import 'post_detail_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
 import 'message_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
 import 'utils/app_colors.dart'; // Nguồn màu chính thức
+
+// Constants (Lấy từ các file khác để đảm bảo màu cho logic mới)
+const Color activeGreen = Color(0xFF32CD32);
 
 // --- Màn hình Chỉnh sửa Profile ---
 class EditProfileScreen extends StatefulWidget {
@@ -579,6 +582,77 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // NEW ACTION HANDLER FOR FRIEND BUTTON
+  void _handleFriendAction(String friendStatus, String targetUserName) async {
+    final myId = _currentUser!.uid;
+    final theirId = _profileUserId;
+    final myUserRef = _firestore.collection('users').doc(myId);
+    final theirUserRef = _firestore.collection('users').doc(theirId);
+    final theirNotifications = theirUserRef.collection('notifications');
+
+    try {
+      if (friendStatus == 'pending_outgoing') {
+        // HÀNH ĐỘNG: HỦY LỜI MỜI (Tôi gửi cho họ)
+        await myUserRef.update({'outgoingRequests': FieldValue.arrayRemove([theirId])});
+
+        // Xóa thông báo liên quan (giả định tồn tại)
+        final notifQuery = await theirNotifications
+            .where('type', isEqualTo: 'friend_request')
+            .where('senderId', isEqualTo: myId)
+            .limit(1)
+            .get();
+        for (var doc in notifQuery.docs) {
+          await doc.reference.delete();
+        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã hủy lời mời kết bạn tới $targetUserName.'), backgroundColor: sonicSilver));
+
+      } else if (friendStatus == 'pending_incoming') {
+        // HÀNH ĐỘNG: CHẤP NHẬN LỜI MỜI (Họ gửi cho tôi)
+        final batch = _firestore.batch();
+
+        // 1. Cập nhật friendUids cho cả hai
+        batch.update(myUserRef, {'friendUids': FieldValue.arrayUnion([theirId])});
+        batch.update(theirUserRef, {'friendUids': FieldValue.arrayUnion([myId])});
+
+        // 2. Xóa outgoing request của họ (vì tôi đã chấp nhận)
+        batch.update(theirUserRef, {'outgoingRequests': FieldValue.arrayRemove([myId])});
+
+        // 3. Xóa thông báo lời mời đến tôi (ta không xóa, ta dựa vào trạng thái removed from target's outgoing)
+
+        // 4. Gửi thông báo chấp nhận ngược lại
+        DocumentSnapshot myUserDoc = await myUserRef.get();
+        String senderName = (myUserDoc.data() as Map<String, dynamic>?)?['displayName'] ?? 'Người dùng';
+        String? senderAvatarUrl = (myUserDoc.data() as Map<String, dynamic>?)?['photoURL'];
+
+        batch.set(
+            theirNotifications.doc(),
+            {
+              'type': 'friend_accept',
+              'senderId': myId,
+              'senderName': senderName,
+              'senderAvatarUrl': senderAvatarUrl,
+              'destinationId': myId, // UID của tôi
+              'contentPreview': 'đã chấp nhận lời mời kết bạn của bạn.',
+              'timestamp': FieldValue.serverTimestamp(),
+              'isRead': false,
+            }
+        );
+
+        await batch.commit();
+
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã chấp nhận lời mời kết bạn từ $targetUserName!'), backgroundColor: activeGreen));
+
+      } else if (friendStatus == 'none') {
+        // HÀNH ĐỘNG: GỬI LỜI MỜI MỚI
+        _toggleFriendRequest('none', targetUserName);
+      }
+    } catch (e) {
+      print("Lỗi xử lý hành động kết bạn: $e");
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lỗi: Thao tác không thành công.'), backgroundColor: coralRed));
+    }
+  }
+
+
   Widget _buildStatsBlock(
       int posts,
       int followers,
@@ -636,7 +710,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context, bool isAccountLocked, String name, String bio) {
+  // Cập nhật _buildActionButtons để nhận targetUserData
+  Widget _buildActionButtons(
+      BuildContext context,
+      bool isAccountLocked,
+      String name,
+      String bio,
+      Map<String, dynamic> targetUserData // <<< THAM SỐ MỚI
+      ) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: StreamBuilder<DocumentSnapshot>(
@@ -647,27 +728,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
           }
 
           final myData = myDataSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+          final currentUserId = _auth.currentUser!.uid;
 
           final amIFollowing = (myData['following'] as List<dynamic>? ?? []).contains(_profileUserId);
           final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(_profileUserId);
-          final isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(_profileUserId);
+          final isOutgoingPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(_profileUserId);
+
+          // <<< LOGIC MỚI CHO YÊU CẦU: KIỂM TRA LỜI MỜI ĐẾN TỪ TARGET USER (Tức Target User có gửi cho tôi không)
+          // Target User là người đang được xem profile (Target User Data)
+          final targetOutgoingRequests = List<String>.from(targetUserData['outgoingRequests'] ?? []);
+          // Kiểm tra xem Target User có gửi lời mời đến Current User không
+          final hasIncomingRequest = targetOutgoingRequests.contains(currentUserId);
 
           String friendStatus = 'none';
           if (isFriend) {
             friendStatus = 'friend';
-          } else if (isPending) {
-            friendStatus = 'pending';
+          } else if (hasIncomingRequest) { // ĐÚNG: Ưu tiên lời mời đến (Chấp nhận)
+            friendStatus = 'pending_incoming';
+          } else if (isOutgoingPending) { // Tiếp theo kiểm tra lời mời đi (Hủy lời mời)
+            friendStatus = 'pending_outgoing';
           }
+
+          // ... (Phần logic button)
 
           final followButtonText = amIFollowing ? 'Đang theo dõi' : 'Theo dõi';
           final followButtonColor = amIFollowing ? darkSurface : Colors.blueAccent;
           final followTextColor = Colors.white;
           final followButtonSide = amIFollowing ? const BorderSide(color: sonicSilver) : BorderSide.none;
 
-          final friendButtonText = friendStatus == 'friend' ? 'Bạn bè' : (friendStatus == 'pending' ? 'Hủy lời mời' : 'Kết bạn');
-          final friendButtonColor = friendStatus == 'friend' ? darkSurface : (friendStatus == 'pending' ? darkSurface : topazColor);
-          final friendTextColor = friendStatus == 'friend' ? sonicSilver : (friendStatus == 'pending' ? sonicSilver : Colors.black);
-          final friendButtonSide = friendStatus == 'friend' || friendStatus == 'pending' ? BorderSide(color: sonicSilver) : BorderSide.none;
+          // --- LOGIC BUTTON KẾT BẠN MỚI ---
+          final friendButtonText;
+          final friendButtonColor;
+          final friendTextColor;
+          final friendButtonSide;
+          final bool enableFriendButton;
+
+          if (friendStatus == 'friend') {
+            friendButtonText = 'Bạn bè';
+            friendButtonColor = darkSurface;
+            friendTextColor = sonicSilver;
+            friendButtonSide = BorderSide(color: sonicSilver);
+            enableFriendButton = false;
+          } else if (friendStatus == 'pending_outgoing') {
+            friendButtonText = 'Hủy lời mời'; // Tôi gửi, chờ họ chấp nhận
+            friendButtonColor = darkSurface;
+            friendTextColor = sonicSilver;
+            friendButtonSide = BorderSide(color: sonicSilver);
+            enableFriendButton = true;
+          } else if (friendStatus == 'pending_incoming') {
+            friendButtonText = 'Chấp nhận'; // Họ gửi, tôi chấp nhận
+            friendButtonColor = topazColor;
+            friendTextColor = Colors.black;
+            friendButtonSide = BorderSide.none;
+            enableFriendButton = true;
+          } else { // none
+            friendButtonText = 'Kết bạn';
+            friendButtonColor = topazColor;
+            friendTextColor = Colors.black;
+            friendButtonSide = BorderSide.none;
+            enableFriendButton = true;
+          }
+
 
           return Row(
             children: [
@@ -685,10 +806,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(width: 10),
 
-              if (!isFriend)
+              // Chỉ hiện nút Kết bạn nếu không phải là bạn bè
+              if (friendStatus != 'friend')
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () => _toggleFriendRequest(friendStatus, name),
+                    onPressed: enableFriendButton ? () => _handleFriendAction(friendStatus, name) : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: friendButtonColor,
                       foregroundColor: friendTextColor,
@@ -698,8 +820,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: Text(friendButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   ),
                 ),
-              if (!isFriend)
-                const SizedBox(width: 10),
+
+              const SizedBox(width: 10),
 
               Expanded(
                 child: OutlinedButton(
@@ -909,9 +1031,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildTabIcon(Icons.grid_on_rounded, 0),
-          if (isMyProfile) _buildTabIcon(Icons.lock_outline_rounded, 1),
-          _buildTabIcon(Icons.favorite_border_rounded, isMyProfile ? 2 : 1),
-          if (isMyProfile) _buildTabIcon(Icons.bookmark_border_rounded, 3),
+          if (isMyProfile) _buildTabIcon(Icons.people_alt_outlined, 1), // BỔ SUNG: Bạn bè (Index 1)
+          if (isMyProfile) _buildTabIcon(Icons.lock_outline_rounded, 2), // Chỉ mình tôi (Index mới là 2)
+          _buildTabIcon(Icons.favorite_border_rounded, isMyProfile ? 3 : 1), // Thích (Index mới là 3/1)
+          if (isMyProfile) _buildTabIcon(Icons.bookmark_border_rounded, 4), // Đã lưu (Index mới là 4)
         ],
       ),
     );
@@ -1040,17 +1163,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   isAccountLocked,
                   lockStats,
                   followers, // Tham số 12
-                  following // Tham số 13
+                  following, // Tham số 13
+                  userData // Tham số 14
               ),
               _buildGalleryTabs(),
               Expanded(
                 child: IndexedStack(
                   index: _selectedTabIndex,
                   children: [
+                    // Index 0: Công khai (Giữ nguyên)
                     _buildGridForStream(
                       _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Công khai').orderBy('timestamp', descending: true).limit(21).snapshots(),
                       'Chưa có bài viết nào.',
                     ),
+
+                    // BỔ SUNG: Index 1: Bạn bè (Chỉ chủ Profile thấy)
+                    if (_isMyProfile)
+                      _buildGridForStream(
+                        _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Bạn bè').orderBy('timestamp', descending: true).limit(21).snapshots(),
+                        'Chưa có bài viết chỉ dành cho bạn bè nào.',
+                      ),
+
+                    // Index 2 (Shifted): Chỉ mình tôi (của tôi) / Liked by others (người lạ)
                     if (_isMyProfile)
                       _buildGridForStream(
                         _firestore.collection('posts').where('uid', isEqualTo: _profileUserId).where('privacy', isEqualTo: 'Chỉ mình tôi').orderBy('timestamp', descending: true).limit(21).snapshots(),
@@ -1061,11 +1195,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _firestore.collection('posts').where('likedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
                         'Người dùng này chưa thích bài viết nào.',
                       ),
+
+                    // Index 3 (Shifted): Favorites (Chỉ chủ Profile)
                     if (_isMyProfile)
                       _buildGridForStream(
                         _firestore.collection('posts').where('likedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
                         'Bạn chưa thích bài viết nào.',
                       ),
+
+                    // Index 4 (Shifted): Saved (Chỉ chủ Profile)
                     if (_isMyProfile)
                       _buildGridForStream(
                         _firestore.collection('posts').where('savedBy', arrayContains: _profileUserId).orderBy('timestamp', descending: true).limit(21).snapshots(),
@@ -1088,23 +1226,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
       bool isAccountLocked,
       bool lockStats,
       List<String> followers, // Thêm danh sách followers
-      List<String> following // Thêm danh sách following
+      List<String> following, // Thêm danh sách following
+      Map<String, dynamic> targetUserData // <<< THAM SỐ MỚI
       ) {
     final heroTag = 'userAvatar_$_profileUserId';
 
-    // Xác định quyền xem danh sách: Là chủ tài khoản HOẶC Chủ tài khoản không khóa (lockStats = false)
-    final bool canViewLists = _isMyProfile || !lockStats;
-
-    // Xác định xem có cần khóa danh sách (truyền vào hàm _navigateToUserList)
-    final bool isFollowersListLocked = !canViewLists;
-    final bool isFollowingListLocked = !canViewLists;
+    // SỬA LỖI BẢO MẬT: Trạng thái khóa cuối cùng chỉ là FALSE khi:
+    // 1. Là Profile của TÔI (Profile đang xem == Profile của tôi)
+    // 2. HOẶC Profile đó không bật bất kỳ tùy chọn khóa nào.
+    final bool finalIsLocked = !_isMyProfile && (lockStats || isAccountLocked);
 
     // Define Navigation Actions (Followers)
     final VoidCallback onFollowersTap = () => _navigateToUserList(
         'followers',
         name,
         followers,
-        isFollowersListLocked
+        finalIsLocked
     );
 
     // Define Navigation Actions (Following)
@@ -1112,7 +1249,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'following',
         name,
         following,
-        isFollowingListLocked
+        finalIsLocked
     );
 
     final bool hideSensitiveStats = !_isMyProfile && (isAccountLocked || lockStats);
@@ -1141,7 +1278,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: TextStyle(color: sonicSilver, fontSize: 16),
               ),
             ),
-          _buildActionButtons( context, isAccountLocked, name, bio ),
+          _buildActionButtons( context, isAccountLocked, name, bio, targetUserData ), // TRUYỀN DỮ LIỆU MỚI
           const SizedBox(height: 10),
         ],
       ),
