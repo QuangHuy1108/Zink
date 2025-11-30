@@ -1154,6 +1154,8 @@ class _PostCardState extends State<PostCard> {
     if (confirm == true) {
       try {
         await _firestore.collection('posts').doc(_postId).delete();
+
+        await _firestore.collection('users').doc(_currentUser!.uid).update({'postsCount': FieldValue.increment(-1)}); // <<< DÒNG BỔ SUNG
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xóa bài viết.')));
           // Sau khi xóa thành công, ta mô phỏng ẩn vĩnh viễn (do nó không còn tồn tại)

@@ -253,19 +253,60 @@ class FollowersScreen extends StatelessWidget {
         itemCount: userIds.length,
         itemBuilder: (context, index) {
           final userId = userIds[index];
-          // TODO: Trong bản thực tế, bạn cần fetch user data chi tiết từ Firestore dựa trên userId
-          return ListTile(
-            leading: const CircleAvatar(backgroundColor: darkSurface, child: Icon(Icons.person, color: sonicSilver)),
-            title: Text('ID: $userId', style: const TextStyle(color: Colors.white)),
-            subtitle: Text('Đang hiển thị ID người dùng.', style: const TextStyle(color: sonicSilver)),
+
+          return FutureBuilder<DocumentSnapshot>(
+            future: FirebaseFirestore.instance.collection('users').doc(userId).get(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return ListTile(
+                  leading: const CircleAvatar(backgroundColor: darkSurface, child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: sonicSilver))),
+                  title: const Text('Đang tải...', style: TextStyle(color: Colors.white)),
+                );
+              }
+
+              if (!snapshot.hasData || !snapshot.data!.exists) {
+                return ListTile(
+                  leading: const CircleAvatar(backgroundColor: darkSurface, child: Icon(Icons.error_outline, color: coralRed)),
+                  title: Text('Không tìm thấy người dùng ($userId)', style: const TextStyle(color: coralRed)),
+                );
+              }
+
+              final userData = snapshot.data!.data() as Map<String, dynamic>;
+              final displayName = userData['displayName'] as String? ?? 'Người dùng ẩn';
+              final username = userData['username'] as String? ?? '';
+              final avatarUrl = userData['photoURL'] as String?;
+
+              final ImageProvider? avatarImage = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+                  ? NetworkImage(avatarUrl)
+                  : null;
+
+              return ListTile(
+                onTap: () {
+                  // Điều hướng đến ProfileScreen của người đó
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (ctx) => ProfileScreen(
+                          targetUserId: userId,
+                          onNavigateToHome: () {},
+                          onLogout: () {}
+                      )
+                  ));
+                },
+                leading: CircleAvatar(
+                  backgroundColor: darkSurface,
+                  backgroundImage: avatarImage,
+                  child: avatarImage == null ? const Icon(Icons.person, color: sonicSilver) : null,
+                ),
+                title: Text(displayName, style: const TextStyle(color: Colors.white)),
+                subtitle: Text('@$username', style: const TextStyle(color: sonicSilver)),
+                // ĐÃ BỎ DÒNG trailing: const Icon(Icons.arrow_forward_ios, color: sonicSilver, size: 16),
+              );
+            },
           );
         },
       ),
     );
   }
 }
-// --- KẾT THÚC MÀN HÌNH MỚI ---
-
 // --- CẬP NHẬT: _buildStatItem để có thể nhấn được (Sử dụng 3 arguments) ---
 Widget _buildStatItem(int count, String label, VoidCallback onTap) {
   return GestureDetector(
@@ -341,6 +382,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               profileName: profileName,
               userIds: userIds,
               profileUserId: _profileUserId,
+              isLocked: isLocked,
             ),
           ),
         );

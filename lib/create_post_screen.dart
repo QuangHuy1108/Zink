@@ -150,6 +150,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
       await _firestore.collection('posts').add(newPostData);
 
+      await _firestore.collection('users').doc(currentUser.uid).update({'postsCount': FieldValue.increment(1)}); // <<< DÒNG BỔ SUNG
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: const Text('Đã đăng bài viết thành công!'),

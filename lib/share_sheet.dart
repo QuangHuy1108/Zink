@@ -147,6 +147,7 @@ class _ShareSheetContentState extends State<ShareSheetContent> {
       // 2. Cập nhật lượt chia sẻ trên bài viết gốc
       batch.update(postRef, {'sharesCount': FieldValue.increment(1)});
 
+      batch.update(_firestore.collection('users').doc(user.uid), {'postsCount': FieldValue.increment(1)}); // <--- DÒNG BỔ SUNG
       // 3. TẠO CHÚ THÍCH (CAPTION) MỚI CHỈ LÀ THÔNG BÁO CHIA SẺ
       // Ví dụ: QuangHuy đã chia sẻ bài viết của MinhTin.
       final newCaption = '$displayName đã chia sẻ bài viết của $originalPostOwnerName.';
