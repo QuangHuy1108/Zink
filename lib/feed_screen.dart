@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Import for SharedPreferences
 
 // Import các màn hình và widget khác
 import 'profile_screen.dart' hide PostCard, Comment, PlaceholderScreen, FeedScreen, FollowersScreen, MessageScreen;
@@ -12,7 +13,7 @@ import 'search_screen.dart';
 import 'notification_screen.dart' hide Comment, StoryViewScreen, CommentBottomSheetContent, ProfileScreen;
 import 'post_detail_screen.dart';
 import 'message_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 
 // --- Định nghĩa Comment ---
 class Comment {
@@ -395,7 +396,7 @@ class _FeedScreenState extends State<FeedScreen> {
     await _fetchCurrentUserFollowing(); // Tải lại danh sách theo dõi
   }
 
-  void _scrollToTopAndRefresh() { // KHỐI NÀY
+  void _scrollToTopAndRefresh() { // KHỐI NỐI
     if (_scrollController.hasClients) {
       // 1. Cuộn lên đầu
       _scrollController.animateTo(
@@ -411,7 +412,24 @@ class _FeedScreenState extends State<FeedScreen> {
     }
   }
 
-  Future<void> _fetchSuggestedFriends() async {
+  // HÀM MỚI: Xử lý xóa item cục bộ và kích hoạt fetch mới
+  void _removeSuggestionLocallyAndRefresh(String removedUid) {
+    // 1. Tạm thời loại bỏ item đó khỏi mảng hiện tại (để giảm flicker)
+    if (mounted) {
+      setState(() {
+        _suggestedFriends.removeWhere((doc) => doc.id == removedUid);
+      });
+    }
+
+    // 2. Kích hoạt fetch mới sau một thời gian ngắn (để thấy suggestion mới)
+    // Không cần await, để nó chạy trong background
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _fetchSuggestedFriends(); // Gọi hàm fetch để lấy suggestions mới
+    });
+  }
+
+
+  Future<void> _fetchSuggestedFriends([dynamic ignored]) async {
     if (_currentUser == null) return;
 
     try {
@@ -518,7 +536,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
         final List<DocumentSnapshot> allPosts = snapshot.data?.docs ?? [];
 
-        // 3. LỌC BÀI VIẾT DỰA TRÊN QUYỀN RIÊNG TƯ (Local Filter)
+        // 3. LỌC BÀI VIẾT DỰ TRÊN QUYỀN RIÊNG TƯ (Local Filter)
         final List<DocumentSnapshot> filteredPosts = allPosts.where((doc) {
           final String privacy = doc['privacy'] ?? 'Công khai';
           final String postAuthorId = doc['uid'];
@@ -566,8 +584,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 return SuggestedFriendsSection(
                   suggestedFriends: item,
                   myUserDataStream: _myUserDataStream,
-                  onActionTaken: _fetchSuggestedFriends,
-                );
+                  onActionTaken: (data) => _fetchSuggestedFriends(data),                );
               }
 
               final doc = item as DocumentSnapshot;
@@ -709,13 +726,14 @@ class _FeedScreenState extends State<FeedScreen> {
 class SuggestedFriendsSection extends StatelessWidget {
   final List<DocumentSnapshot> suggestedFriends;
   final Stream<DocumentSnapshot>? myUserDataStream;
-  final VoidCallback? onActionTaken; // <-- THÊM CALLBACK
+  // SỬA: Callback nhận UID đã bị loại bỏ
+  final void Function(dynamic)? onActionTaken;
 
   const SuggestedFriendsSection({
     Key? key,
     required this.suggestedFriends,
     required this.myUserDataStream,
-    this.onActionTaken, // <-- THÊM VÀO CONSTRUCTOR
+    this.onActionTaken,
   }) : super(key: key);
 
   @override
@@ -767,13 +785,13 @@ class SuggestedFriendsSection extends StatelessWidget {
 class SuggestedFriendCard extends StatefulWidget {
   final Map<String, dynamic> userData;
   final Stream<DocumentSnapshot>? myUserDataStream;
-  final VoidCallback? onActionTaken; // <-- THÊM CALLBACK
+  final void Function(dynamic)? onActionTaken;
 
   const SuggestedFriendCard({
     Key? key,
     required this.userData,
     required this.myUserDataStream,
-    this.onActionTaken, // <-- THÊM VÀO CONSTRUCTOR
+    this.onActionTaken,
   }) : super(key: key);
 
   @override
@@ -783,7 +801,17 @@ class SuggestedFriendCard extends StatefulWidget {
 class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  bool _isLoading = false;
+  User? _currentUser;
+
+  // [FIX] Sử dụng biến loading riêng biệt
+  bool _isFriendRequestLoading = false;
+  bool _isFollowLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUser = _auth.currentUser;
+  }
 
   void _navigateToProfile(BuildContext context) {
     final targetUserId = widget.userData['uid'] as String?;
@@ -797,69 +825,104 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
     ));
   }
 
-  Future<void> _handleAction(Function action) async {
-    if (_isLoading) return;
-    if (mounted) setState(() => _isLoading = true);
+  void _toggleFriendRequest(bool isCurrentlyPending) async {
+    final currentUser = _auth.currentUser;
+    final targetUserId = widget.userData['uid'] as String?;
+
+    // [FIX] Kiểm tra loading riêng
+    if (currentUser == null || targetUserId == null || _isFriendRequestLoading) return;
+    if (mounted) setState(() => _isFriendRequestLoading = true);
+
+    final userRef = _firestore.collection('users').doc(currentUser.uid);
+    final targetNotificationRef = _firestore.collection('users').doc(targetUserId).collection('notifications');
+
     try {
-      await action();
+      if (isCurrentlyPending) { // Hủy lời mời
+        await userRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
+        final notificationQuery = await targetNotificationRef.where('type', isEqualTo: 'friend_request').where('senderId', isEqualTo: currentUser.uid).limit(1).get();
+        for (var doc in notificationQuery.docs) {
+          await doc.reference.delete();
+        }
+      } else { // Gửi lời mời
+        DocumentSnapshot myUserDoc = await userRef.get();
+        String senderName = 'Người dùng Zink';
+        String? senderAvatarUrl;
+
+        if (myUserDoc.exists) {
+          final myData = myUserDoc.data() as Map<String, dynamic>;
+          senderName = myData['displayName'] ?? 'Người dùng Zink';
+          senderAvatarUrl = myData['photoURL'];
+        }
+
+        await userRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
+        await targetNotificationRef.add({
+          'type': 'friend_request',
+          'senderId': currentUser.uid,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl,
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+          'actionTaken': false,
+        });
+      }
     } catch (e) {
-      print("Lỗi khi thực hiện hành động: $e");
+      print("Error toggling friend request: $e");
     } finally {
-      if (mounted) setState(() => _isLoading = false);
-      // Gọi callback để FeedScreen có thể làm mới danh sách gợi ý
+      if (mounted) setState(() => _isFriendRequestLoading = false);
+
+      // [FIX LỖI TRIỆT ĐỂ] LOẠI BỎ CUỘC GỌI TẢI LẠI (widget.onActionTaken?.call(true);)
+      // Thẻ sẽ tự cập nhật trạng thái kết bạn/chờ thông qua StreamBuilder,
+      // nhưng sẽ không bị xóa khỏi danh sách gợi ý cho đến khi người dùng tự làm mới.
     }
   }
 
-  void _toggleFriendRequest(bool isCurrentlyPending) {
+  void _toggleFollow(bool isCurrentlyFollowing) async {
     final currentUser = _auth.currentUser;
     final targetUserId = widget.userData['uid'] as String?;
-    if (currentUser == null || targetUserId == null) return;
 
-    _handleAction(() async {
-      final userRef = _firestore.collection('users').doc(currentUser.uid);
-      final targetNotificationRef = _firestore.collection('users').doc(targetUserId).collection('notifications');
+    // [FIX] Kiểm tra loading riêng
+    if (currentUser == null || targetUserId == null || _isFollowLoading) return;
+    if (mounted) setState(() => _isFollowLoading = true);
 
-      if (isCurrentlyPending) {
-        await userRef.update({'outgoingRequests': FieldValue.arrayRemove([targetUserId])});
-        final notifQuery = await targetNotificationRef.where('type', isEqualTo: 'friend_request').where('senderId', isEqualTo: currentUser.uid).limit(1).get();
-        for (var doc in notifQuery.docs) {
-          await doc.reference.delete();
-        }
-      } else {
-        DocumentSnapshot myUserDoc = await userRef.get();
-        String senderName = 'Một người dùng';
-        if (myUserDoc.exists) senderName = (myUserDoc.data() as Map<String, dynamic>)['displayName'] ?? senderName;
-        await userRef.update({'outgoingRequests': FieldValue.arrayUnion([targetUserId])});
-        await targetNotificationRef.add({'type': 'friend_request', 'senderId': currentUser.uid, 'senderName': senderName, 'timestamp': FieldValue.serverTimestamp(), 'isRead': false, 'actionTaken': false});
-      }
-      widget.onActionTaken?.call();
-    });
-  }
+    final myDocRef = _firestore.collection('users').doc(currentUser.uid);
+    final theirDocRef = _firestore.collection('users').doc(targetUserId);
+    final batch = _firestore.batch();
 
-  void _toggleFollow(bool isCurrentlyFollowing) {
-    final currentUser = _auth.currentUser;
-    final targetUserId = widget.userData['uid'] as String?;
-    if (currentUser == null || targetUserId == null) return;
-
-    _handleAction(() async {
-      final myDocRef = _firestore.collection('users').doc(currentUser.uid);
-      final theirDocRef = _firestore.collection('users').doc(targetUserId);
-      final batch = _firestore.batch();
-
-      if (isCurrentlyFollowing) {
+    try {
+      if (isCurrentlyFollowing) { // Hủy theo dõi
         batch.update(myDocRef, {'following': FieldValue.arrayRemove([targetUserId])});
         batch.update(theirDocRef, {'followers': FieldValue.arrayRemove([currentUser.uid])});
-      } else {
+      } else { // Theo dõi
         DocumentSnapshot myUserDoc = await myDocRef.get();
         String senderName = 'Một người dùng';
-        if (myUserDoc.exists) senderName = (myUserDoc.data() as Map<String, dynamic>)['displayName'] ?? senderName;
+        String? senderAvatarUrl;
+        if (myUserDoc.exists) {
+          final myData = myUserDoc.data() as Map<String, dynamic>;
+          senderName = myData['displayName'] ?? 'Một người dùng';
+          senderAvatarUrl = myData['photoURL'];
+        }
+
         batch.update(myDocRef, {'following': FieldValue.arrayUnion([targetUserId])});
         batch.update(theirDocRef, {'followers': FieldValue.arrayUnion([currentUser.uid])});
-        batch.set(theirDocRef.collection('notifications').doc(), {'type': 'follow', 'senderId': currentUser.uid, 'senderName': senderName, 'timestamp': FieldValue.serverTimestamp(), 'isRead': false});
+
+        final notificationRef = theirDocRef.collection('notifications').doc();
+        batch.set(notificationRef, {
+          'type': 'follow',
+          'senderId': currentUser.uid,
+          'senderName': senderName,
+          'senderAvatarUrl': senderAvatarUrl ?? '',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isRead': false,
+        });
       }
       await batch.commit();
-      widget.onActionTaken?.call();
-    });
+    } catch (e) {
+      print("Error toggling follow: $e");
+    } finally {
+      if (mounted) setState(() => _isFollowLoading = false);
+
+      // [FIX LỖI TRIỆT ĐỂ] LOẠI BỎ CUỘC GỌI TẢI LẠI (widget.onActionTaken?.call(true);)
+    }
   }
 
   @override
@@ -870,121 +933,123 @@ class _SuggestedFriendCardState extends State<SuggestedFriendCard> {
     final int mutualCount = widget.userData['mutual'] as int? ?? 0;
     final String friendMutualText = mutualCount > 0 ? '$mutualCount bạn chung' : 'Chưa có bạn chung';
 
-    final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null;
+    final ImageProvider? avatarProvider = (avatarUrl != null && avatarUrl.isNotEmpty && avatarUrl.startsWith('http'))
+        ? NetworkImage(avatarUrl)
+        : null;
 
-    return Container(
-      width: 150,
-      padding: const EdgeInsets.all(12.0),
-      decoration: BoxDecoration(
-        color: darkSurface,
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.grey[800]!, width: 1),
-      ),
+    Widget userInfoSection = GestureDetector(
+      onTap: () => _navigateToProfile(context),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () => _navigateToProfile(context),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircleAvatar(
-                    radius: 35,
-                    backgroundColor: sonicSilver,
-                    backgroundImage: avatarProvider,
-                    child: avatarProvider == null ? const Icon(Icons.person, size: 30, color: Colors.white) : null,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    displayName,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    friendMutualText,
-                    style: const TextStyle(color: sonicSilver, fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
+          // [SỬA LỖI ĐỒNG BỘ] Loại bỏ Container bọc viền và đồng bộ kích thước Avatar/Icon
+          CircleAvatar(
+            // [ĐỒNG BỘ] Giảm radius xuống 30
+            radius: 30,
+            backgroundColor: sonicSilver, // Màu nền xám (giống màu thẻ Lời mời)
+            backgroundImage: avatarProvider,
+            child: avatarProvider == null
+            // [ĐỒNG BỘ] Giảm kích thước Icon xuống 30
+                ? const Icon(Icons.person, color: Colors.white, size: 30)
+                : null,
           ),
-          StreamBuilder<DocumentSnapshot>(
-              stream: widget.myUserDataStream,
-              builder: (context, myDataSnapshot) {
-                bool isFriend = false;
-                bool isPending = false;
-                bool isFollowing = false;
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Text(displayName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Text(friendMutualText, style: const TextStyle(color: sonicSilver, fontSize: 12), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+    );
 
-                if (myDataSnapshot.hasData && myDataSnapshot.data!.exists) {
-                  final myData = myDataSnapshot.data!.data() as Map<String, dynamic>;
-                  isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(targetUserId);
-                  isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(targetUserId);
-                  isFollowing = (myData['following'] as List<dynamic>? ?? []).contains(targetUserId);
-                }
+    return Container(
+      width: 150,
+      margin: const EdgeInsets.only(right: 12),
+      decoration: BoxDecoration(color: darkSurface, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10, width: 0.5)),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(child: userInfoSection),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+            child: StreamBuilder<DocumentSnapshot>(
+                stream: widget.myUserDataStream,
+                builder: (context, myDataSnapshot) {
 
-                final friendButtonText = isFriend ? 'Bạn bè' : (isPending ? 'Hủy lời mời' : 'Kết bạn');
-                final friendButtonColor = isFriend || isPending ? darkSurface : topazColor;
-                final friendTextColor = isFriend || isPending ? sonicSilver : Colors.black;
-                final friendButtonSide = isFriend || isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
+                  bool isFriend = false;
+                  bool isPending = false;
+                  bool isFollowing = false;
+                  if (myDataSnapshot.hasData && myDataSnapshot.data!.exists) {
+                    final myData = myDataSnapshot.data!.data() as Map<String, dynamic>;
+                    isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(targetUserId);
+                    isPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(targetUserId);
+                    isFollowing = (myData['following'] as List<dynamic>? ?? []).contains(targetUserId);
+                  }
 
-                final followButtonText = isFollowing ? 'Hủy theo dõi' : 'Theo dõi';
-                final followButtonColor = isFollowing ? darkSurface : Colors.blueAccent;
-                final followTextColor = isFollowing ? sonicSilver : Colors.white;
-                final followButtonSide = isFollowing ? BorderSide(color: sonicSilver) : BorderSide.none;
+                  // [KHÔI PHỤC GIAO DIỆN NÚT BAN ĐẦU]
+                  final friendButtonText = isFriend ? 'Bạn bè' : (isPending ? 'Hủy lời mời' : 'Kết bạn');
+                  final friendButtonColor = isFriend || isPending ? darkSurface : topazColor;
+                  final friendTextColor = isFriend || isPending ? sonicSilver : Colors.black;
+                  final friendButtonSide = isFriend || isPending ? BorderSide(color: sonicSilver) : BorderSide.none;
 
-                return Column(
-                  children: [
-                    SizedBox(
-                      height: 32,
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: isFriend || _isLoading ? null : () => _toggleFriendRequest(isPending),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: friendButtonColor,
-                          foregroundColor: friendTextColor,
-                          side: friendButtonSide,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          padding: EdgeInsets.zero,
-                          disabledBackgroundColor: darkSurface, // Màu khi bị vô hiệu hóa
-                        ),
-                        child: _isLoading && !isFriend
-                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                            : Text(friendButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (!isFriend) // Ẩn nút theo dõi nếu đã là bạn bè
+                  final followButtonText = isFollowing ? 'Hủy theo dõi' : 'Theo dõi';
+                  final followButtonColor = Colors.blueAccent;
+                  final followTextColor = Colors.white;
+                  final followButtonSide = BorderSide.none;
+
+                  return Column(
+                    children: [
                       SizedBox(
-                        height: 32,
                         width: double.infinity,
+                        height: 38,
                         child: ElevatedButton(
-                          onPressed: _isLoading ? null : () => _toggleFollow(isFollowing),
+                          onPressed: isFriend || _isFriendRequestLoading ? null : () => _toggleFriendRequest(isPending),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: followButtonColor,
-                            foregroundColor: followTextColor,
-                            side: followButtonSide,
+                            backgroundColor: friendButtonColor,
+                            foregroundColor: friendTextColor,
+                            side: friendButtonSide,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            padding: EdgeInsets.zero,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            disabledBackgroundColor: darkSurface,
                           ),
-                          child: _isLoading
-                              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : Text(followButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          child: _isFriendRequestLoading
+                              ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                              : Text(friendButtonText, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                         ),
                       ),
-                  ],
-                );
-              }),
+                      const SizedBox(height: 6),
+                      if (!isFriend)
+                        SizedBox(
+                          width: double.infinity,
+                          height: 38,
+                          child: ElevatedButton(
+                            onPressed: _isFollowLoading ? null : () => _toggleFollow(isFollowing),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: followButtonColor,
+                              foregroundColor: followTextColor,
+                              side: followButtonSide,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                            child: _isFollowLoading
+                                ? const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                : Text(followButtonText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                    ],
+                  );
+                }),
+          ),
         ],
       ),
     );
   }
 }
-
 // =======================================================
 // PostCard Widget
 // =======================================================

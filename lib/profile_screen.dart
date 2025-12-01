@@ -711,13 +711,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // Cập nhật _buildActionButtons để nhận targetUserData
-  Widget _buildActionButtons(
-      BuildContext context,
-      bool isAccountLocked,
-      String name,
-      String bio,
-      Map<String, dynamic> targetUserData // <<< THAM SỐ MỚI
-      ) {
+  Widget _buildActionButtons(BuildContext context, bool isAccountLocked, String name, String bio, Map<String, dynamic> targetUserData) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: StreamBuilder<DocumentSnapshot>(
@@ -734,29 +728,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final isFriend = (myData['friendUids'] as List<dynamic>? ?? []).contains(_profileUserId);
           final isOutgoingPending = (myData['outgoingRequests'] as List<dynamic>? ?? []).contains(_profileUserId);
 
-          // <<< LOGIC MỚI CHO YÊU CẦU: KIỂM TRA LỜI MỜI ĐẾN TỪ TARGET USER (Tức Target User có gửi cho tôi không)
-          // Target User là người đang được xem profile (Target User Data)
+          // <<< LOGIC XÁC ĐỊNH LỜI MỜI ĐẾN (Họ gửi cho tôi)
           final targetOutgoingRequests = List<String>.from(targetUserData['outgoingRequests'] ?? []);
-          // Kiểm tra xem Target User có gửi lời mời đến Current User không
           final hasIncomingRequest = targetOutgoingRequests.contains(currentUserId);
+          // >>> END LOGIC XÁC ĐỊNH LỜI MỜI ĐẾN
 
           String friendStatus = 'none';
           if (isFriend) {
             friendStatus = 'friend';
-          } else if (hasIncomingRequest) { // ĐÚNG: Ưu tiên lời mời đến (Chấp nhận)
+          } else if (hasIncomingRequest) { // ĐÚNG: Priority 1 - Lời mời đến (Chấp nhận)
             friendStatus = 'pending_incoming';
-          } else if (isOutgoingPending) { // Tiếp theo kiểm tra lời mời đi (Hủy lời mời)
+          } else if (isOutgoingPending) { // Priority 2 - Lời mời đi (Hủy lời mời)
             friendStatus = 'pending_outgoing';
           }
 
-          // ... (Phần logic button)
 
           final followButtonText = amIFollowing ? 'Đang theo dõi' : 'Theo dõi';
           final followButtonColor = amIFollowing ? darkSurface : Colors.blueAccent;
           final followTextColor = Colors.white;
           final followButtonSide = amIFollowing ? const BorderSide(color: sonicSilver) : BorderSide.none;
 
-          // --- LOGIC BUTTON KẾT BẠN MỚI ---
+          // --- LOGIC HIỂN THỊ NÚT KẾT BẠN/CHẤP NHẬN ---
           final friendButtonText;
           final friendButtonColor;
           final friendTextColor;
@@ -770,13 +762,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             friendButtonSide = BorderSide(color: sonicSilver);
             enableFriendButton = false;
           } else if (friendStatus == 'pending_outgoing') {
-            friendButtonText = 'Hủy lời mời'; // Tôi gửi, chờ họ chấp nhận
+            friendButtonText = 'Hủy lời mời';
             friendButtonColor = darkSurface;
             friendTextColor = sonicSilver;
             friendButtonSide = BorderSide(color: sonicSilver);
             enableFriendButton = true;
           } else if (friendStatus == 'pending_incoming') {
-            friendButtonText = 'Chấp nhận'; // Họ gửi, tôi chấp nhận
+            friendButtonText = 'Chấp nhận';
             friendButtonColor = topazColor;
             friendTextColor = Colors.black;
             friendButtonSide = BorderSide.none;
