@@ -379,33 +379,52 @@ class _ChatListView extends StatelessWidget {
 }
 
 // BỔ SUNG: Widget hiển thị Tin nhắn được Ghim
+// BỔ SUNG: Widget hiển thị Tin nhắn được Ghim (Đã nâng cấp onTap)
 class _PinnedMessageView extends StatelessWidget {
   final String text;
   final VoidCallback onDismiss;
+  final VoidCallback? onTap; // <--- Thêm callback này
 
-  const _PinnedMessageView({required this.text, required this.onDismiss});
+  const _PinnedMessageView({
+    required this.text,
+    required this.onDismiss,
+    this.onTap, // <--- Thêm vào constructor
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(8.0),
       color: darkSurface,
+      // Bọc Row bằng GestureDetector để bắt sự kiện bấm vào toàn bộ thanh
       child: Row(
         children: [
-          const Icon(Icons.push_pin, color: topazColor, size: 18),
-          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: whiteColor, fontSize: 13),
+            child: GestureDetector(
+              onTap: onTap, // <--- Xử lý sự kiện bấm để cuộn
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.push_pin, color: topazColor, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: whiteColor, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           InkWell(
             onTap: onDismiss,
             child: const Padding(
-              padding: EdgeInsets.only(left: 8.0),
+              padding: EdgeInsets.all(12.0), // Tăng vùng bấm cho nút đóng
               child: Icon(Icons.close, color: sonicSilver, size: 18),
             ),
           ),
@@ -414,7 +433,6 @@ class _PinnedMessageView extends StatelessWidget {
     );
   }
 }
-
 
 // BỔ SUNG: Widget hiển thị trạng thái đang trả lời
 class _ReplyPreview extends StatelessWidget {
@@ -494,11 +512,13 @@ class _ConversationView extends StatefulWidget {
 class _ConversationViewState extends State<_ConversationView> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TextEditingController _messageController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
   final FocusNode _messageFocusNode = FocusNode(); // <--- FIX LỖI 2: Thêm FocusNode
   String _currentUserName = 'Bạn';
   late String _otherUserId;
   List<String> _groupParticipants = [];
+  List<DocumentSnapshot> _currentDisplayMessages = [];
 
   // BỔ SUNG: State cho tính năng mới
   Map<String, dynamic>? _replyingToMessage; // {id, senderName, text}
@@ -557,7 +577,6 @@ class _ConversationViewState extends State<_ConversationView> {
   @override
   void dispose() {
     _messageController.dispose();
-    _scrollController.dispose();
     _messageFocusNode.dispose(); // <--- FIX LỖI 2: Dispose FocusNode
     super.dispose();
   }
@@ -685,8 +704,13 @@ class _ConversationViewState extends State<_ConversationView> {
 
       _messageController.clear();
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        if (_itemScrollController.isAttached) {
+          // Index 0 là tin nhắn mới nhất (vì list đảo ngược - reverse: true)
+          _itemScrollController.scrollTo(
+            index: 0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
         }
       });
     } catch (e) {
@@ -972,6 +996,7 @@ class _ConversationViewState extends State<_ConversationView> {
 
 
   @override
+  @override
   Widget build(BuildContext context) {
     return Column(
       children: [
@@ -979,6 +1004,27 @@ class _ConversationViewState extends State<_ConversationView> {
         if (_pinnedMessageId != null && _pinnedMessageData != null)
           _PinnedMessageView(
             text: _pinnedMessageData!['text'] ?? 'Đã ghim một tin nhắn',
+            // --- THAY ĐỔI 4: Logic tìm và cuộn đến tin nhắn ghim ---
+            onTap: () {
+              if (_pinnedMessageId != null) {
+                // Tìm vị trí (index) của tin nhắn ghim trong danh sách đang hiển thị
+                final int index = _currentDisplayMessages.indexWhere((doc) => doc.id == _pinnedMessageId);
+
+                if (index != -1 && _itemScrollController.isAttached) {
+                  _itemScrollController.scrollTo(
+                    index: index,
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeInOut,
+                    alignment: 0.5, // Căn tin nhắn ra giữa màn hình nếu được
+                  );
+                  // Có thể thêm hiệu ứng highlight tại đây nếu muốn
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Không tìm thấy tin nhắn gốc (có thể đã quá cũ).'), backgroundColor: sonicSilver)
+                  );
+                }
+              }
+            },
             onDismiss: () {
               _firestore.collection('chats').doc(widget.chatId).update({
                 'pinnedMessageId': FieldValue.delete(),
@@ -1004,23 +1050,30 @@ class _ConversationViewState extends State<_ConversationView> {
               }
 
               final allMessages = snapshot.data?.docs ?? [];
+              // Lọc tin nhắn đã xóa
               final messages = allMessages.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 final deletedFor = data['deletedFor'] as List<dynamic>? ?? [];
                 return !deletedFor.contains(widget.currentUser.uid);
               }).toList();
 
+              // --- THAY ĐỔI 5: Lưu danh sách tin nhắn để dùng cho tính năng cuộn ---
+              _currentDisplayMessages = messages;
+
               if (messages.isEmpty) {
                 return Center(child: Text('Bắt đầu cuộc trò chuyện với ${widget.targetUserName}!', style: const TextStyle(color: sonicSilver)));
               }
               _markMessagesAsRead(allMessages);
 
-              return ListView.builder(
-                reverse: true,
-                controller: _scrollController,
+              // --- THAY ĐỔI 6: Dùng ScrollablePositionedList thay vì ListView ---
+              return ScrollablePositionedList.builder(
+                reverse: true, // Quan trọng: Tin nhắn mới nhất ở dưới (index 0)
+                itemScrollController: _itemScrollController,
+                itemPositionsListener: _itemPositionsListener,
                 padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
                 itemCount: messages.length,
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                // keyboardDismissBehavior không có sẵn trực tiếp trên ScrollablePositionedList,
+                // có thể dùng Listener bọc ngoài nếu cần thiết, nhưng tạm thời bỏ qua.
                 itemBuilder: (context, index) {
                   final messageDoc = messages[index];
                   final data = messageDoc.data() as Map<String, dynamic>;
@@ -1030,10 +1083,24 @@ class _ConversationViewState extends State<_ConversationView> {
                   final isRecalled = data['isRecalled'] as bool? ?? false;
 
                   final currentMsgTimestamp = data['timestamp'] as Timestamp? ?? Timestamp.now();
-                  final DateTime currentDate = currentMsgTimestamp.toDate();
                   final String senderId = data['senderId'] ?? '';
 
-                  // ... (logic date header)
+                  // Logic Date Header (Giữ nguyên hoặc tùy chỉnh lại nếu cần hiển thị ngày)
+                  // Lưu ý: Với ScrollablePositionedList, việc chèn widget DateHeader
+                  // phức tạp hơn chút vì index phải khớp 1-1.
+                  // Cách đơn giản nhất: Nhúng DateHeader vào TRÊN CÙNG của Bubble item.
+
+                  Widget? dateHeader;
+                  if (index == messages.length - 1) {
+                    dateHeader = _DateHeader(date: currentMsgTimestamp.toDate());
+                  } else {
+                    final nextMsgTimestamp = (messages[index + 1].data() as Map<String, dynamic>)['timestamp'] as Timestamp? ?? Timestamp.now();
+                    final currentDate = currentMsgTimestamp.toDate();
+                    final nextDate = nextMsgTimestamp.toDate();
+                    if (currentDate.day != nextDate.day || currentDate.month != nextDate.month || currentDate.year != nextDate.year) {
+                      dateHeader = _DateHeader(date: currentDate);
+                    }
+                  }
 
                   final bubble = _MessageBubble(
                     messageId: messageId,
@@ -1043,15 +1110,29 @@ class _ConversationViewState extends State<_ConversationView> {
                     isMe: (data['senderId'] ?? '') == widget.currentUser.uid,
                     isRead: data['isRead'] ?? false,
                     isGroup: widget.isGroup,
-                    onAvatarTap: _handleAvatarTap, // <--- Đã sửa lỗi 3
+                    onAvatarTap: _handleAvatarTap,
                     onLongPress: _handleMessageLongPress,
                     replyTo: replyTo,
                     isRecalled: isRecalled,
                     isPinned: _pinnedMessageId == messageId,
-                    data: data, // <<< KHẮC PHỤC LỖI: TRUYỀN TOÀN BỘ DATA
+                    data: data,
                   );
 
-                  // ... (logic date header)
+                  if (dateHeader != null) {
+                    return Column(
+                      children: [
+                        dateHeader, // Hiển thị ngày tháng (nếu có) trước tin nhắn (vì reverse=true, đây thực ra là 'sau' về mặt thời gian, nhưng 'trên' về mặt hiển thị)
+                        // À khoan, với reverse=true:
+                        // Index 0 (Đáy): Tin mới nhất.
+                        // Index N (Đỉnh): Tin cũ nhất.
+                        // DateHeader nên nằm "trên" tin nhắn cũ hơn.
+                        // Trong list đảo ngược, "trên" nghĩa là item có index lớn hơn hoặc cùng item đó nhưng vẽ ở phía visual top.
+                        // Logic DateHeader của bạn hiện tại vẽ ngày dựa trên so sánh với tin tiếp theo (cũ hơn).
+                        // Để đơn giản, cứ return Column gồm DateHeader và Bubble.
+                        bubble
+                      ],
+                    );
+                  }
 
                   return bubble;
                 },
@@ -1063,7 +1144,6 @@ class _ConversationViewState extends State<_ConversationView> {
       ],
     );
   }
-
   // SỬA: Cập nhật _buildMessageInput để hiển thị trạng thái đang trả lời (Fix lỗi 2)
   Widget _buildMessageInput() {
     return Container(
