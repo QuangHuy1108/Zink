@@ -6,6 +6,8 @@ import 'package:flutter/rendering.dart'; // <-- THÊM DÒNG NÀY
 import 'session_manager.dart'; // Assuming SessionManager is defined in the single file now
 import 'home_screen.dart';   // Assuming HomeScreen is defined in the single file now
 import 'login_screen.dart';  // Assuming LoginScreen is defined in the single file now
+import 'notification_service.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +15,14 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // --- BẮT ĐẦU ĐOẠN CODE MỚI ---
+  // 1. Đăng ký background handler
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  // 2. Khởi tạo dịch vụ thông báo
+  await NotificationService().initialize();
+  // --- KẾT THÚC ĐOẠN CODE MỚI ---
   runApp(const MyApp());
 }
 
