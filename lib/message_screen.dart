@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'create_group_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen;
 import 'profile_screen.dart' hide topazColor, sonicSilver, darkSurface, coralRed, activeGreen, PostDetailScreen, Comment, PlaceholderScreen, FeedScreen, FollowersScreen, MessageScreen;
@@ -62,8 +63,8 @@ class _MessageScreenState extends State<MessageScreen> {
   String _searchQuery = '';
   final FocusNode _searchFocusNode = FocusNode();
   bool _showSearchField = false;
+  Future<DocumentSnapshot>? _chatInitFuture;
 
-  @override
   @override
   void initState() {
     super.initState();
@@ -140,22 +141,30 @@ class _MessageScreenState extends State<MessageScreen> {
       return;
     }
 
+    // Kiểm tra xem otherId có phải là Chat ID không
     final chatDoc = await _firestore.collection('chats').doc(otherId).get();
     if (chatDoc.exists && (chatDoc.data()?['participants'] as List?)?.contains(currentUserId) == true) {
-      if (mounted) setState(() => _chatId = otherId);
+      if (mounted) {
+        setState(() {
+          _chatId = otherId;
+          // THÊM: Lưu Future vào biến
+          _chatInitFuture = _firestore.collection('chats').doc(_chatId).get();
+        });
+      }
       return;
     }
 
+    // Logic tìm hoặc tạo chat 1-1
     final participants = [currentUserId, otherId]..sort();
-
     final querySnapshot = await _firestore.collection('chats')
         .where('participants', isEqualTo: participants)
         .where('isGroup', isEqualTo: false)
         .limit(1)
         .get();
 
+    String resolvedChatId;
     if (querySnapshot.docs.isNotEmpty) {
-      _chatId = querySnapshot.docs.first.id;
+      resolvedChatId = querySnapshot.docs.first.id;
     } else {
       final newChat = await _firestore.collection('chats').add({
         'participants': participants,
@@ -166,10 +175,16 @@ class _MessageScreenState extends State<MessageScreen> {
         'isGroup': false,
         'isPinned': false,
       });
-      _chatId = newChat.id;
+      resolvedChatId = newChat.id;
     }
 
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        _chatId = resolvedChatId;
+        // THÊM: Lưu Future vào biến
+        _chatInitFuture = _firestore.collection('chats').doc(_chatId).get();
+      });
+    }
   }
 
   @override
@@ -273,8 +288,9 @@ class _MessageScreenState extends State<MessageScreen> {
       return _ChatListView(currentUser: _currentUser!, searchQuery: _searchQuery);
     }
 
+    // SỬA ĐOẠN NÀY: Dùng _chatInitFuture
     return FutureBuilder<DocumentSnapshot>(
-      future: _firestore.collection('chats').doc(_chatId!).get(),
+      future: _chatInitFuture, // <-- Dùng biến đã lưu, không tạo mới
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: topazColor));
@@ -619,8 +635,6 @@ class _ConversationViewState extends State<_ConversationView> {
 
       final newMessageRef = chatRef.collection('messages').doc();
       batch.set(newMessageRef, messageContent);
-
-      batch.set(chatRef.collection('messages').doc(), messageContent);
 
       final updateData = <String, dynamic>{
         'lastMessage': text,
